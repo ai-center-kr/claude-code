@@ -1,0 +1,176 @@
+---
+title: "Crate: cc-tools"
+description: "All 33 tool implementations -- Bash, file operations, search, web access, tasks, MCP resources, and more"
+sidebarTitle: "cc-tools"
+---
+
+# cc-tools
+
+This crate contains all tool implementations that the LLM can invoke. Each tool maps to a capability: running shell commands, reading/writing/editing files, searching codebases, fetching web pages, managing tasks, and more.
+
+## Tool Trait
+
+Every tool implements this core trait:
+
+```rust
+#[async_trait]
+pub trait Tool: Send + Sync {
+    /// Human-readable name (matches the constant in cc_core::constants)
+    fn name(&self) -> &str;
+
+    /// One-line description shown to the LLM
+    fn description(&self) -> &str;
+
+    /// The permission level the tool requires
+    fn permission_level(&self) -> PermissionLevel;
+
+    /// JSON Schema describing the tool's input parameters
+    fn input_schema(&self) -> Value;
+
+    /// Execute the tool with the given JSON input
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult;
+
+    /// Produce a ToolDefinition suitable for sending to the API
+    fn to_definition(&self) -> ToolDefinition;
+}
+```
+
+## Permission Levels
+
+```rust
+pub enum PermissionLevel {
+    None,      // No permission needed (purely informational)
+    ReadOnly,  // Read-only filesystem or network access
+    Write,     // Write access to the filesystem
+    Execute,   // Arbitrary command execution
+    Dangerous, // Potentially dangerous (e.g., bypass sandbox)
+}
+```
+
+## ToolContext
+
+Shared context passed to every tool invocation:
+
+```rust
+pub struct ToolContext {
+    pub working_dir: PathBuf,
+    pub permission_mode: PermissionMode,
+    pub permission_handler: Arc<dyn PermissionHandler>,
+    pub cost_tracker: Arc<CostTracker>,
+    pub session_id: String,
+    pub non_interactive: bool,
+    pub mcp_manager: Option<Arc<cc_mcp::McpManager>>,
+    pub config: Config,
+}
+```
+
+Key method: `resolve_path(path)` resolves relative paths against the working directory.
+
+## ToolResult
+
+```rust
+pub struct ToolResult {
+    pub content: String,    // Content sent back to the model
+    pub is_error: bool,     // Whether this was an error
+    pub metadata: Option<Value>, // Optional structured metadata for TUI
+}
+```
+
+## Complete Tool Registry
+
+All 33 built-in tools returned by `all_tools()`:
+
+### Shell & Execution
+
+| Tool | Struct | Permission | Description |
+|------|--------|------------|-------------|
+| `Bash` | `BashTool` | Execute | Run shell commands |
+| `PowerShell` | `PowerShellTool` | Execute | Run PowerShell commands (Windows) |
+| `Sleep` | `SleepTool` | None | Pause execution for a duration |
+
+### File Operations
+
+| Tool | Struct | Permission | Description |
+|------|--------|------------|-------------|
+| `Read` | `FileReadTool` | ReadOnly | Read file contents |
+| `Edit` | `FileEditTool` | Write | Edit file with search/replace |
+| `Write` | `FileWriteTool` | Write | Write or create files |
+| `NotebookEdit` | `NotebookEditTool` | Write | Edit Jupyter notebooks |
+
+### Search
+
+| Tool | Struct | Permission | Description |
+|------|--------|------------|-------------|
+| `Glob` | `GlobTool` | ReadOnly | File pattern matching |
+| `Grep` | `GrepTool` | ReadOnly | Content search with regex |
+| `ToolSearch` | `ToolSearchTool` | None | Search for available tools |
+
+### Web
+
+| Tool | Struct | Permission | Description |
+|------|--------|------------|-------------|
+| `WebFetch` | `WebFetchTool` | ReadOnly | Fetch web page content |
+| `WebSearch` | `WebSearchTool` | ReadOnly | Search the web |
+
+### Task Management
+
+| Tool | Struct | Permission | Description |
+|------|--------|------------|-------------|
+| `TaskCreate` | `TaskCreateTool` | None | Create a background task |
+| `TaskGet` | `TaskGetTool` | None | Get task status |
+| `TaskUpdate` | `TaskUpdateTool` | None | Update a task |
+| `TaskList` | `TaskListTool` | None | List all tasks |
+| `TaskStop` | `TaskStopTool` | None | Stop a running task |
+| `TaskOutput` | `TaskOutputTool` | None | Get task output |
+
+### Planning & Mode
+
+| Tool | Struct | Permission | Description |
+|------|--------|------------|-------------|
+| `EnterPlanMode` | `EnterPlanModeTool` | None | Switch to plan mode |
+| `ExitPlanMode` | `ExitPlanModeTool` | None | Exit plan mode |
+| `TodoWrite` | `TodoWriteTool` | None | Write to the TODO tracker |
+| `Brief` | `BriefTool` | None | Control output verbosity |
+
+### Cron
+
+| Tool | Struct | Permission | Description |
+|------|--------|------------|-------------|
+| `CronCreate` | `CronCreateTool` | Execute | Create a scheduled task |
+| `CronDelete` | `CronDeleteTool` | Execute | Delete a scheduled task |
+| `CronList` | `CronListTool` | None | List scheduled tasks |
+
+### Worktree
+
+| Tool | Struct | Permission | Description |
+|------|--------|------------|-------------|
+| `EnterWorktree` | `EnterWorktreeTool` | Write | Enter a git worktree |
+| `ExitWorktree` | `ExitWorktreeTool` | Write | Exit a git worktree |
+
+### MCP Resources
+
+| Tool | Struct | Permission | Description |
+|------|--------|------------|-------------|
+| `ListMcpResources` | `ListMcpResourcesTool` | ReadOnly | List MCP resources |
+| `ReadMcpResource` | `ReadMcpResourceTool` | ReadOnly | Read an MCP resource |
+
+### Communication & Skills
+
+| Tool | Struct | Permission | Description |
+|------|--------|------------|-------------|
+| `AskUserQuestion` | `AskUserQuestionTool` | None | Ask user a question |
+| `SendMessage` | `SendMessageTool` | None | Send inter-agent message |
+| `Skill` | `SkillTool` | None | Invoke a bundled skill |
+| `Config` | `ConfigTool` | None | Read/modify configuration |
+
+## Tool Lookup
+
+```rust
+// Find a tool by exact name (case-sensitive)
+let tool = find_tool("Bash"); // Some(BashTool)
+let none = find_tool("bash"); // None -- case-sensitive
+```
+
+<Note>
+The `AgentTool` is intentionally excluded from `cc-tools` to avoid circular dependencies. It lives in `cc-query` and is registered separately by the CLI.
+</Note>

@@ -1,0 +1,155 @@
+---
+title: "Services, Context, and State Management"
+description: "Business logic services, React context providers, global session state, and the analytics/API/memory subsystems"
+---
+
+The services layer contains 130+ files covering analytics, API client, session memory, auto-dream consolidation, compact, diagnostics, MCP management, voice, and more. The global state singleton manages ~80 fields of per-session data.
+
+<Note>
+Full spec: [`spec/06_services_context_state.md`](https://github.com/anthropics/claude-code/blob/main/spec/06_services_context_state.md)
+</Note>
+
+## Global Session State (`bootstrap/state.ts`)
+
+The single authoritative source of truth for all per-session metrics. A strict leaf in the import DAG.
+
+### Key State Fields
+
+| Category | Fields |
+|----------|--------|
+| **Paths** | `originalCwd`, `projectRoot`, `cwd` |
+| **Cost** | `totalCostUSD`, `totalAPIDuration`, `totalToolDuration` |
+| **Lines** | `totalLinesAdded`, `totalLinesRemoved` |
+| **Model** | `modelUsage`, `mainLoopModelOverride`, `initialMainLoopModel` |
+| **Session** | `sessionId`, `parentSessionId`, `isInteractive`, `clientType` |
+| **Telemetry** | `meter`, `loggerProvider`, `eventLogger`, `meterProvider`, `tracerProvider` |
+| **Agents** | `agentColorMap`, `agentColorIndex` |
+| **Features** | `kairosActive`, `isRemoteMode`, `scheduledTasksEnabled` |
+| **Debug** | `inMemoryErrorLog`, `slowOperations`, `lastAPIRequest` |
+
+### State Access Patterns
+
+```typescript
+// Getters
+getSessionId(): SessionId
+getCwdState(): string
+getTotalCostUSD(): number
+
+// Setters
+setCwdState(cwd: string): void
+addToTotalCostState(cost, modelUsage, model): void
+
+// Session lifecycle
+regenerateSessionId(options?): SessionId
+switchSession(sessionId, projectDir?): void
+```
+
+## Services Architecture
+
+### Analytics (`services/analytics/`)
+
+| File | Purpose |
+|------|---------|
+| `config.ts` | Analytics configuration |
+| `growthbook.ts` | Feature flag evaluation via GrowthBook |
+| `metadata.ts` | Event metadata collection |
+| `index.ts` | Main analytics entry point |
+| `sink.ts` | Event sink abstraction |
+| `datadog.ts` | Datadog metrics integration |
+| `firstPartyEventLogger.ts` | First-party event logging |
+
+### API Client (`services/api/`)
+
+<CardGroup cols={2}>
+  <Card title="client.ts" icon="server">
+    Core HTTP client for Claude API with retry logic and authentication.
+  </Card>
+  <Card title="claude.ts" icon="brain">
+    Claude-specific API methods: messages, completions, model capabilities.
+  </Card>
+  <Card title="errors.ts" icon="circle-exclamation">
+    Error types and classification for API responses.
+  </Card>
+  <Card title="usage.ts" icon="chart-bar">
+    Usage tracking and quota management.
+  </Card>
+</CardGroup>
+
+Additional API files:
+
+| File | Purpose |
+|------|---------|
+| `filesApi.ts` | File upload/download API |
+| `grove.ts` | Grove API integration |
+| `sessionIngress.ts` | Session ingress for bridge |
+| `withRetry.ts` | Retry logic with exponential backoff |
+| `promptCacheBreakDetection.ts` | Detect prompt cache invalidation |
+
+### Compact Service (`services/compact/`)
+
+Manages context window compaction:
+
+| File | Purpose |
+|------|---------|
+| `compact.ts` | Main compaction logic |
+| `autoCompact.ts` | Automatic compaction triggers |
+| `microCompact.ts` | Lightweight in-place compaction |
+| `apiMicrocompact.ts` | API-side micro-compaction |
+| `grouping.ts` | Message grouping for compaction |
+| `sessionMemoryCompact.ts` | Memory-aware compaction |
+| `prompt.ts` | Compaction prompts |
+
+### Session Memory (`services/SessionMemory/`)
+
+```typescript
+// sessionMemory.ts - Core memory operations
+// prompts.ts - Memory injection prompts
+// sessionMemoryUtils.ts - Helper utilities
+```
+
+### AutoDream (`services/autoDream/`)
+
+Memory consolidation during idle periods:
+
+| File | Purpose |
+|------|---------|
+| `autoDream.ts` | Main dream/consolidation logic |
+| `config.ts` | Dream configuration |
+| `consolidationLock.ts` | Prevent concurrent consolidation |
+| `consolidationPrompt.ts` | AI prompt for memory consolidation |
+
+## React Context Providers
+
+| Context | File | Purpose |
+|---------|------|---------|
+| `QueuedMessageContext` | `context/QueuedMessageContext.tsx` | Message queue for async injection |
+| `FpsMetrics` | `context/fpsMetrics.tsx` | Frame rate monitoring |
+| `Mailbox` | `context/mailbox.tsx` | Inter-component messaging |
+| `ModalContext` | `context/modalContext.tsx` | Modal dialog management |
+| `Notifications` | `context/notifications.tsx` | Toast notifications |
+| `OverlayContext` | `context/overlayContext.tsx` | Overlay rendering |
+| `PromptOverlay` | `context/promptOverlayContext.tsx` | Prompt overlay state |
+| `Stats` | `context/stats.tsx` | Performance statistics |
+| `Voice` | `context/voice.tsx` | Voice input state |
+
+## Screen Components
+
+| Screen | File | Purpose |
+|--------|------|---------|
+| `REPL` | `screens/REPL.tsx` | Main interactive REPL screen |
+| `Doctor` | `screens/Doctor.tsx` | Diagnostic/troubleshooting screen |
+| `ResumeConversation` | `screens/ResumeConversation.tsx` | Session resume UI |
+
+## Additional Services
+
+| Service | Purpose |
+|---------|---------|
+| `MagicDocs` | Automatic documentation generation |
+| `mcpServerApproval` | MCP server approval flow |
+| `notifier.ts` | System notification delivery |
+| `preventSleep.ts` | Prevent system sleep during operations |
+| `PromptSuggestion` | AI-powered prompt suggestions |
+| `rateLimitMessages.ts` | Rate limit user messaging |
+| `tokenEstimation.ts` | Token count estimation |
+| `vcr.ts` | Session recording/replay |
+| `voice.ts` | Voice input processing |

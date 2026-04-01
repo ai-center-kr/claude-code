@@ -1,0 +1,161 @@
+---
+title: "Crate: cc-commands"
+description: "Slash command framework and 35+ built-in commands for the interactive REPL"
+sidebarTitle: "cc-commands"
+---
+
+# cc-commands
+
+This crate implements the `/command` framework that powers the interactive REPL. Users type commands like `/help`, `/compact`, `/model`, `/config`, and `/cost` to control the session without sending prompts to the model.
+
+## SlashCommand Trait
+
+Every command implements this trait:
+
+```rust
+#[async_trait]
+pub trait SlashCommand: Send + Sync {
+    fn name(&self) -> &str;
+    fn aliases(&self) -> Vec<&str> { vec![] }
+    fn description(&self) -> &str;
+    fn help(&self) -> &str { self.description() }
+    fn hidden(&self) -> bool { false }
+    async fn execute(&self, args: &str, ctx: &mut CommandContext) -> CommandResult;
+}
+```
+
+## CommandContext
+
+```rust
+pub struct CommandContext {
+    pub config: Config,
+    pub cost_tracker: Arc<CostTracker>,
+    pub messages: Vec<Message>,
+    pub working_dir: PathBuf,
+}
+```
+
+## CommandResult
+
+Commands return one of these result variants:
+
+```rust
+pub enum CommandResult {
+    Message(String),                  // Display to user (not sent to model)
+    UserMessage(String),              // Inject as if user typed it
+    ConfigChange(Config),             // Modify configuration
+    ConfigChangeMessage(Config, String), // Modify config + show status
+    ClearConversation,                // Clear message history
+    SetMessages(Vec<Message>),        // Replace conversation (e.g., /rewind)
+    StartOAuthFlow(bool),             // Trigger OAuth login
+    Exit,                             // Exit the REPL
+    Silent,                           // No visible output
+    Error(String),                    // Error message
+}
+```
+
+## Built-in Slash Commands
+
+All 35+ commands returned by `all_commands()`:
+
+### Core
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `/help` | `/h`, `/?` | Show available commands and usage |
+| `/exit` | `/quit`, `/q` | Exit the REPL |
+| `/clear` | `/c` | Clear conversation history |
+| `/compact` | | Manually compact conversation |
+| `/version` | `/v` | Show version information |
+
+### Model & Config
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `/model` | | View or change the active model |
+| `/config` | | View or modify configuration |
+| `/thinking` | | Configure extended thinking budget |
+| `/effort` | | Set reasoning effort level |
+| `/output-style` | | Change output formatting style |
+| `/theme` | | Set UI color theme |
+| `/keybindings` | | View or edit key bindings |
+| `/privacy-settings` | | Manage privacy/telemetry settings |
+
+### Session
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `/resume` | | Resume a previous session |
+| `/session` | | View current session info |
+| `/cost` | | Show token usage and costs |
+| `/stats` | | Show session statistics |
+| `/status` | | Show current status |
+| `/rewind` | | Revert to an earlier point in conversation |
+| `/rename` | | Rename the current session |
+| `/export` | | Export conversation to file |
+
+### Development
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `/diff` | | Show recent file changes |
+| `/review` | | Request a code review |
+| `/commit` | | Create a git commit |
+| `/files` | | List files in context |
+| `/summary` | | Summarize conversation |
+| `/plan` | | Toggle plan mode |
+| `/tasks` | | View background tasks |
+| `/skills` | | List available skills |
+
+### Memory & Config
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `/memory` | | View/edit CLAUDE.md memory |
+| `/init` | | Initialize project config |
+| `/hooks` | | View configured hooks |
+| `/mcp` | | View MCP server status |
+| `/permissions` | | View permission settings |
+
+### Account
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `/login` | | Authenticate with Anthropic |
+| `/logout` | | Clear saved credentials |
+| `/doctor` | | Diagnose configuration issues |
+| `/bug` | | Report a bug |
+
+## Named Commands
+
+In addition to slash commands, `cc-commands` provides **named commands** invoked as `claude <name> [args...]` before the REPL starts:
+
+```rust
+pub trait NamedCommand: Send + Sync {
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn usage(&self) -> &str;
+    fn execute_named(&self, args: &[&str], ctx: &CommandContext) -> CommandResult;
+}
+```
+
+### Available Named Commands
+
+| Command | Usage | Description |
+|---------|-------|-------------|
+| `agents` | `claude agents [list\|create\|edit\|delete]` | Manage sub-agents |
+| `add-dir` | `claude add-dir <path>` | Add a directory to context |
+| `branch` | `claude branch <name>` | Create/switch git branches |
+| `tag` | `claude tag [list\|create\|delete]` | Manage tags |
+| `passes` | `claude passes [list\|run]` | Run analysis passes |
+| `ide` | `claude ide [status\|connect]` | IDE integration |
+| `pr-comments` | `claude pr-comments <pr>` | View PR comments |
+| `desktop` | `claude desktop` | Desktop app integration |
+| `mobile` | `claude mobile` | Mobile app integration |
+| `install-github-app` | `claude install-github-app` | Install GitHub App |
+| `remote-setup` | `claude remote-setup` | Configure remote access |
+| `stickers` | `claude stickers` | View companion stickers |
+
+<Tip>
+Named commands are checked before Clap argument parsing, so they can use names that would otherwise conflict with the positional prompt argument.
+</Tip>

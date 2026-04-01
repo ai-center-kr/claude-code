@@ -1,0 +1,172 @@
+---
+title: "Constants, Types, and Configuration"
+description: "All constants, beta headers, system prompt configuration, OAuth settings, API limits, UI glyphs, and TypeScript type definitions"
+---
+
+The constants directory (21 files) defines every configuration value, API limit, beta header, UI glyph, system prompt section, and tool limit used throughout Claude Code.
+
+<Note>
+Full spec: [`spec/12_constants_types.md`](https://github.com/anthropics/claude-code/blob/main/spec/12_constants_types.md)
+</Note>
+
+## API Limits (`constants/apiLimits.ts`)
+
+### Image Limits
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `API_IMAGE_MAX_BASE64_SIZE` | 5 MB | Max base64-encoded image size |
+| `IMAGE_TARGET_RAW_SIZE` | 3.75 MB | Target raw image size |
+| `IMAGE_MAX_WIDTH` | 2000 px | Client-side max width |
+| `IMAGE_MAX_HEIGHT` | 2000 px | Client-side max height |
+
+### PDF Limits
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `PDF_TARGET_RAW_SIZE` | 20 MB | Max raw PDF size |
+| `API_PDF_MAX_PAGES` | 100 | Max pages accepted |
+| `PDF_EXTRACT_SIZE_THRESHOLD` | 3 MB | Threshold for page extraction |
+| `PDF_MAX_EXTRACT_SIZE` | 100 MB | Max PDF for extraction |
+| `PDF_MAX_PAGES_PER_READ` | 20 | Max pages per Read tool call |
+
+### Media Limits
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `API_MAX_MEDIA_PER_REQUEST` | 100 | Max images + PDFs per request |
+
+## Beta Headers (`constants/betas.ts`)
+
+API beta feature strings used in request headers:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `CLAUDE_CODE_20250219_BETA_HEADER` | `claude-code-20250219` | Core Claude Code beta |
+| `INTERLEAVED_THINKING_BETA_HEADER` | `interleaved-thinking-2025-05-14` | Extended reasoning in tool use |
+| `CONTEXT_1M_BETA_HEADER` | `context-1m-2025-08-07` | 1M token context window |
+| `STRUCTURED_OUTPUTS_BETA_HEADER` | `structured-outputs-2025-12-15` | Structured output format |
+| `WEB_SEARCH_BETA_HEADER` | `web-search-2025-03-05` | Web search tool |
+| `EFFORT_BETA_HEADER` | `effort-2025-11-24` | Thinking budget control |
+| `FAST_MODE_BETA_HEADER` | `fast-mode-2026-02-01` | Faster output mode |
+| `TOKEN_EFFICIENT_TOOLS_BETA_HEADER` | `token-efficient-tools-2026-03-28` | Efficient tool encoding |
+| `ADVISOR_BETA_HEADER` | `advisor-tool-2026-03-01` | Advisor tool |
+
+### Provider-Specific Beta Sets
+
+**Bedrock Extra Params** (must go in `extraBodyParams`, not headers):
+- `interleaved-thinking-2025-05-14`
+- `context-1m-2025-08-07`
+- `tool-search-tool-2025-10-19`
+
+**Vertex Count Tokens Allowed** (other betas cause 400 errors):
+- `claude-code-20250219`
+- `interleaved-thinking-2025-05-14`
+- `context-management-2025-06-27`
+
+## UI Figures / Glyphs (`constants/figures.ts`)
+
+### Status Indicators
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `BLACK_CIRCLE` | Platform-adaptive | Spinner/status dot |
+| `LIGHTNING_BOLT` | `\u21af` | Fast mode indicator |
+| `UP_ARROW` | `\u2191` | Opus 1m merge notice |
+| `DOWN_ARROW` | `\u2193` | Scroll hint |
+
+### Effort Level Indicators
+
+| Level | Glyph | Unicode |
+|-------|-------|---------|
+| Low | `\u25cb` | White circle |
+| Medium | `\u25d0` | Half-filled circle |
+| High | `\u25cf` | Black circle |
+| Max | `\u25c9` | Fisheye (Opus 4.6 only) |
+
+## Common Utilities (`constants/common.ts`)
+
+```typescript
+getLocalISODate(): string    // YYYY-MM-DD in local timezone
+getSessionStartDate: string  // Memoized for prompt-cache stability
+getLocalMonthYear(): string  // "Month YYYY" for tool prompts
+```
+
+Respects `CLAUDE_CODE_OVERRIDE_DATE` for ant-only testing.
+
+## Cyber Risk Instruction
+
+Safeguards team-owned instruction injected into system prompt:
+
+> Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes.
+
+## Error IDs (`constants/errorIds.ts`)
+
+Obfuscated numeric identifiers for production error tracking. Next ID: 346.
+
+## Constants Directory Map
+
+| File | Content |
+|------|---------|
+| `apiLimits.ts` | Image, PDF, media limits |
+| `betas.ts` | Beta header strings |
+| `common.ts` | Date utilities |
+| `cyberRiskInstruction.ts` | Security guardrails |
+| `errorIds.ts` | Error tracking IDs |
+| `figures.ts` | UI glyphs and symbols |
+| `files.ts` | File path constants |
+| `github-app.ts` | GitHub App configuration |
+| `keys.ts` | Analytics keys |
+| `messages.ts` | User-facing messages |
+| `oauth.ts` | OAuth configuration |
+| `outputStyles.ts` | Output style definitions |
+| `product.ts` | Product URLs |
+| `prompts.ts` | System prompt templates |
+| `spinnerVerbs.ts` | Loading animation text |
+| `system.ts` | System-level constants |
+| `systemPromptSections.ts` | Prompt section builders |
+| `toolLimits.ts` | Per-tool limits |
+| `tools.ts` | Tool set definitions |
+| `turnCompletionVerbs.ts` | Completion messages |
+| `xml.ts` | XML tag constants |
+
+## Type System (`types/`)
+
+### ID Types (`types/ids.ts`)
+
+Branded string types for type-safe IDs:
+- `SessionId` -- UUID session identifier
+- `AgentId` -- Agent instance identifier
+- `ToolUseId` -- Tool invocation identifier
+
+### Permission Types (`types/permissions.ts`)
+
+```typescript
+type PermissionMode =
+  | 'default'
+  | 'plan'
+  | 'auto'
+  | 'bypassPermissions'
+  | 'acceptEdits'
+
+type PermissionDecision =
+  | { behavior: 'allow'; updatedInput?: unknown }
+  | { behavior: 'deny'; reason: string }
+  | { behavior: 'ask'; message: string }
+```
+
+### Hook Types (`types/hooks.ts`)
+
+```typescript
+type HookEvent =
+  | 'PreToolUse'
+  | 'PostToolUse'
+  | 'Notification'
+  | 'Stop'
+```
+
+### Command Types (`types/command.ts`)
+
+```typescript
+type CommandType = 'local' | 'local-jsx' | 'prompt'
+```

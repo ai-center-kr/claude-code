@@ -1,0 +1,166 @@
+---
+title: "Understand the Custom Terminal Framework"
+description: "Deep dive into the Ink terminal rendering system: React reconciler, Yoga layout, double-buffered screen, ANSI handling, and performance optimization"
+---
+
+The `ink/` directory contains a complete custom terminal UI framework built as a heavily modified fork of Ink. It provides fullscreen alternate-screen rendering, hardware-accelerated scroll, text selection, search highlighting, mouse tracking, and fine-grained performance instrumentation.
+
+<Note>
+Full spec: [`spec/08_ink_terminal.md`](https://github.com/anthropics/claude-code/blob/main/spec/08_ink_terminal.md)
+</Note>
+
+## Rendering Pipeline
+
+```
+React tree
+    -> React Reconciler (reconciler.ts)
+    -> Virtual DOM (dom.ts)
+    -> Yoga layout engine (layout/)
+    -> Output buffer (output.ts)
+    -> Screen cell buffer (screen.ts)
+    -> Diff engine (log-update.ts)
+    -> Patch optimizer (optimizer.ts)
+    -> Terminal write (terminal.ts / termio/)
+```
+
+## Public API (`ink.ts`)
+
+The package facade wraps every `render()` and `createRoot()` in a `ThemeProvider`:
+
+```typescript
+// Core rendering
+render(node, options?): Promise<Instance>
+createRoot(options?): Promise<Root>
+
+// Components
+Box, Text, Button, Link, Newline, NoSelect, RawAnsi, Ansi, Spacer
+
+// Hooks
+useAnimationFrame, useApp, useInput, useInterval
+useSelection, useStdin, useTabStatus, useTerminalFocus
+useTerminalTitle, useTerminalViewport
+```
+
+## Core Ink Class (`ink.tsx`)
+
+The central orchestrator owns the React fiber root, yoga layout tree, double-buffered screen, focus manager, and main render loop.
+
+### Constructor Options
+
+```typescript
+type Options = {
+  stdout: NodeJS.WriteStream
+  stdin: NodeJS.ReadStream
+  stderr: NodeJS.WriteStream
+  exitOnCtrlC: boolean
+  patchConsole: boolean
+  onFrame?: (event: FrameEvent) => void
+}
+```
+
+### Key Internal State
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `log` | LogUpdate | Diff engine for ANSI output |
+| `scheduleRender` | throttled fn | 16ms throttle (60fps target) |
+| `container` | FiberRoot | React-reconciler fiber root (ConcurrentRoot) |
+| `rootNode` | DOMElement | The `ink-root` DOM node |
+| `focusManager` | FocusManager | DOM-style focus state machine |
+| `frontFrame` / `backFrame` | Frame | Double-buffered screen frames |
+| `selection` | SelectionState | Text selection for alt-screen |
+| `searchHighlightQuery` | string | Current /search term |
+| `altScreenActive` | boolean | Set by `<AlternateScreen>` |
+
+### Render Loop (`onRender`)
+
+1. Run `createRenderer()` -- walk DOM, run yoga, fill back-buffer
+2. Apply selection overlay (invert styled cells)
+3. Apply search highlight
+4. Apply positioned highlight (current match)
+5. Diff back-frame vs front-frame via `log.render()` producing `Patch[]`
+6. Run `optimize(patches)` to merge/deduplicate
+7. Call `writeDiffToTerminal()` to serialize ANSI
+8. Emit `onFrame` event
+9. Swap front/back frames
+
+## Constants
+
+```typescript
+FRAME_INTERVAL_MS = 16  // ~60 fps target
+```
+
+## Virtual DOM (`dom.ts`)
+
+Minimal browser-like DOM adapted for terminal:
+
+- Element types: `ink-root`, `ink-box`, `ink-text`, `ink-virtual-text`
+- Mutation operations mark nodes and ancestors `dirty`
+- Clean subtrees are skipped during render pass
+
+## Layout Engine
+
+Based on Yoga (Facebook's flexbox implementation):
+
+- Maps CSS-like flexbox properties to terminal grid
+- Handles text wrapping and measurement
+- Supports absolute positioning
+- Integrates with the Ink component props (`flexDirection`, `padding`, `margin`, etc.)
+
+## Screen Buffer (`screen.ts`)
+
+Cell-based screen representation:
+
+- Each cell stores: character, ANSI style, hyperlink
+- Double-buffered: front frame (displayed) and back frame (being rendered)
+- Diff produces minimal patches for update
+- Pools for style interning, character interning, hyperlink interning
+
+## Alt-Screen Handling
+
+```typescript
+setAltScreenActive(active, mouseTracking)
+// Enables BSU/ESU synchronized output
+// DECSTBM hardware scroll hints
+// Selection-aware repaints
+
+resetFramesForAltScreen()
+// Blank both frames, set prevFrameContaminated = true
+
+reenterAltScreen()
+// Re-assert on SIGCONT
+```
+
+## Resize Handling
+
+- Synchronous (no debounce) to keep terminal dimensions and yoga in sync
+- For alt-screen: resets frame buffers atomically
+- Sets `needsEraseBeforePaint = true` for next BSU/ESU block
+
+## Console Patching
+
+- `patchConsole()` -- intercepts `console.log/warn/error` to separate file descriptor
+- `patchStderr()` -- same for stderr
+- Prevents output mixing between application and terminal rendering
+
+## Public API Methods
+
+```typescript
+render(node)              // Update React tree
+unmount()                 // Graceful teardown
+waitUntilExit()           // Promise resolved on unmount
+clearTextSelection()      // Clear selection, force repaint
+setSearchHighlight(query) // Live search term
+setSearchPositions(...)   // Positioned highlights for navigation
+```
+
+## Performance Features
+
+| Feature | Detail |
+|---------|--------|
+| Throttled render | 16ms leading+trailing via `queueMicrotask` |
+| Dirty tracking | Only re-layout/re-paint dirty subtrees |
+| Patch optimization | Merge adjacent patches, deduplicate |
+| Style interning | Pool-based ANSI style deduplication |
+| Double buffering | Minimal diff between frames |
+| Frame events | `onFrame` callback for FPS monitoring |

@@ -1,0 +1,124 @@
+---
+title: "Understand ULTRAPLAN: 30-Minute Remote Planning"
+description: "ULTRAPLAN offloads complex planning tasks to a remote Cloud Container Runtime session running Opus 4.6, with browser-based approval and terminal teleportation."
+---
+
+## Deep Planning via Remote Sessions
+
+ULTRAPLAN is a mode where Claude Code offloads a complex planning task to a **remote Cloud Container Runtime (CCR) session** running **Opus 4.6**, gives it up to **30 minutes** to think, and lets you approve the result from your browser.
+
+This is a bridge between local development and cloud-scale reasoning -- the planning happens remotely while you continue working locally.
+
+## The Flow
+
+1. Claude Code identifies a task that needs deep planning (or the user triggers `/ultraplan`)
+2. A remote CCR session is spun up via the `tengu_ultraplan_model` config
+3. Your terminal enters a polling state, checking every **3 seconds** for results
+4. Meanwhile, a browser-based UI lets you watch the planning happen in real time
+5. You can approve, reject, or edit the plan from the browser
+6. When approved, the result is "teleported" back to your local terminal
+
+## Keyword Detection
+
+The system detects `ultraplan` and `ultrareview` keywords in user input with smart exclusion logic:
+
+```typescript
+export function findUltraplanTriggerPositions(text: string): TriggerPosition[]
+export function hasUltraplanKeyword(text: string): boolean
+export function replaceUltraplanKeyword(text: string): string
+// Replaces first triggerable "ultraplan" with "plan" for the forwarded CCR prompt
+```
+
+The keyword does **NOT** trigger when it appears:
+- Inside paired delimiters (backticks, quotes, brackets, braces)
+- In a path or identifier context
+- Followed by `?`
+- Inside a slash command
+
+It is apostrophe-aware: `"let's ultraplan"` still triggers correctly.
+
+## The Polling System
+
+The core polling loop runs in `ultraplan/ccrSession.ts`:
+
+```typescript
+export async function pollForApprovedExitPlanMode(
+  sessionId: string,
+  timeoutMs: number,
+  onPhaseChange?: (phase: UltraplanPhase) => void,
+  shouldStop?: () => boolean
+): Promise<PollResult>
+```
+
+<Note>
+  The poller checks `pollRemoteSessionEvents()` every **3 seconds** with a maximum of 5 consecutive failures before giving up on transient network errors (`MAX_CONSECUTIVE_FAILURES = 5`).
+</Note>
+
+### Phases
+
+The planning session progresses through three phases:
+
+| Phase | Description |
+|-------|-------------|
+| `running` | CCR session is actively planning |
+| `needs_input` | Session requires user input or approval |
+| `plan_ready` | Plan has been generated and awaits approval |
+
+### Scan Results
+
+The `ExitPlanModeScanner` classifies the CCR event stream into outcomes:
+
+```typescript
+export type ScanResult =
+  | { kind: 'approved'; plan: string }    // User approved the plan
+  | { kind: 'teleport'; plan: string }    // User wants local execution
+  | { kind: 'rejected'; id: string }      // User rejected, planning continues
+  | { kind: 'pending' }                   // ExitPlanMode emitted, awaiting result
+  | { kind: 'terminated'; subtype: string } // Session ended
+  | { kind: 'unchanged' }                 // No new events
+```
+
+Precedence order: `approved > terminated > rejected > pending > unchanged`.
+
+## The Teleport Sentinel
+
+When the user clicks "teleport back to terminal" in the browser UI, a special sentinel value is embedded in the rejection feedback:
+
+```typescript
+export const ULTRAPLAN_TELEPORT_SENTINEL = '__ULTRAPLAN_TELEPORT_LOCAL__'
+```
+
+This tells the local Claude Code instance to take the plan and execute it locally rather than continuing remote execution. Plan text is extracted from `tool_result.content` via markers:
+
+- `"## Approved Plan:\n"` or `"## Approved Plan (edited by user):\n"` for remote execution
+- `ULTRAPLAN_TELEPORT_SENTINEL + "\n"` for local execution
+
+## Poll Result
+
+The final result returned to the local terminal:
+
+```typescript
+export type PollResult = {
+  plan: string               // The approved plan text
+  rejectCount: number        // How many times the user rejected before approving
+  executionTarget: 'local' | 'remote'  // Where to execute
+}
+```
+
+## Error Handling
+
+When polling fails, structured errors provide actionable context:
+
+```typescript
+export type PollFailReason =
+  | 'terminated'           // CCR session ended unexpectedly
+  | 'timeout_pending'      // Timed out with a pending plan
+  | 'timeout_no_plan'      // Timed out with no plan generated
+  | 'extract_marker_missing' // Plan text couldn't be extracted
+  | 'network_or_unknown'   // Network failures exceeded retry limit
+  | 'stopped'              // User or system stopped polling
+```
+
+<Warning>
+  ULTRAPLAN relies on the CCR infrastructure and remote session management. The 30-minute budget and 3-second polling interval are hardcoded, reflecting the expected cost and latency of cloud-based Opus 4.6 reasoning.
+</Warning>

@@ -1,0 +1,152 @@
+---
+title: "Browse All 100+ Slash Commands"
+description: "Complete reference of Claude Code slash commands organized by category, with command types and availability"
+---
+
+Claude Code includes 87+ built-in slash commands plus additional plugin and skill-contributed commands. All share a unified `Command` interface with lazy loading for minimal startup cost.
+
+<Note>
+Full spec: [`spec/02_commands.md`](https://github.com/anthropics/claude-code/blob/main/spec/02_commands.md)
+</Note>
+
+## Command System Architecture
+
+Commands are assembled from multiple sources in priority order:
+
+```
+bundledSkills -> builtinPluginSkills -> skillDirCommands ->
+workflowCommands -> pluginCommands -> pluginSkills -> COMMANDS()
+```
+
+### Command Types
+
+| Type | Description | Return |
+|------|-------------|--------|
+| `local` | Runs synchronously | `{ type: 'text' \| 'compact' \| 'skip', value?: string }` |
+| `local-jsx` | Renders a React/Ink component | `React.ReactNode` |
+| `prompt` | Expands to text sent to the model | Content blocks |
+
+### Lazy Loading
+
+Every command's implementation is loaded via dynamic `import()` from its `load()` method. The index file contains only metadata (name, description, type) so startup cost is minimized.
+
+## Command Interface
+
+```typescript
+interface CommandBase {
+  name: string
+  description: string
+  aliases?: string[]
+  argumentHint?: string
+  isEnabled?: () => boolean
+  isHidden?: boolean
+  availability?: Array<'claude-ai' | 'console'>
+  source?: 'builtin' | 'plugin' | 'mcp' | 'bundled' | string
+  load: () => Promise<{ call: Function }>
+}
+```
+
+## Command Reference
+
+### Session Management
+
+| Command | Aliases | Type | Description |
+|---------|---------|------|-------------|
+| `/clear` | `/reset`, `/new` | local | Clear conversation history |
+| `/resume` | `/continue` | local-jsx | Resume a previous session |
+| `/compact` | | local | Compact conversation context |
+| `/exit` | `/quit` | local | Exit the CLI |
+| `/branch` | `/fork` | local | Fork current session |
+
+### Code & Files
+
+| Command | Aliases | Type | Description |
+|---------|---------|------|-------------|
+| `/diff` | | local-jsx | Show git diff of changes |
+| `/commit` | | prompt | Create a git commit |
+| `/commit-push-pr` | | prompt | Commit, push, and create PR |
+| `/review` | | prompt | Review code changes |
+| `/ultrareview` | | prompt | Deep code review |
+| `/security-review` | | prompt | Security-focused review |
+| `/files` | | local | List tracked files |
+
+### Navigation & Config
+
+| Command | Aliases | Type | Description |
+|---------|---------|------|-------------|
+| `/add-dir` | | local | Add directory for CLAUDE.md scanning |
+| `/config` | `/settings` | local-jsx | Open settings editor |
+| `/model` | | local-jsx | Switch model |
+| `/permissions` | `/allowed-tools` | local-jsx | Manage tool permissions |
+| `/theme` | | local-jsx | Change theme |
+| `/color` | | local-jsx | Change color scheme |
+
+### AI & Planning
+
+| Command | Aliases | Type | Description |
+|---------|---------|------|-------------|
+| `/plan` | | local | Toggle plan mode |
+| `/ultraplan` | | prompt | Deep planning mode |
+| `/think-back` | | local | Review thinking history |
+| `/effort` | | local | Set reasoning effort |
+| `/fast` | | local | Toggle fast mode |
+
+### Tools & Integration
+
+| Command | Aliases | Type | Description |
+|---------|---------|------|-------------|
+| `/mcp` | | local-jsx | Manage MCP servers |
+| `/skills` | | local-jsx | Browse skills |
+| `/plugin` | `/plugins`, `/marketplace` | local-jsx | Plugin marketplace |
+| `/hooks` | | local-jsx | Manage hooks |
+| `/agents` | | local-jsx | Manage agents |
+| `/ide` | | local | IDE integration settings |
+
+### Remote & Bridge
+
+| Command | Aliases | Type | Description |
+|---------|---------|------|-------------|
+| `/bridge` | `/remote-control`, `/rc` | local | Remote control setup |
+| `/session` | `/remote` | local-jsx | Remote session management |
+| `/remote-setup` | `/web-setup` | local-jsx | Remote environment setup |
+| `/bridge-kick` | | local | Kick bridge connection |
+
+### Information
+
+| Command | Aliases | Type | Description |
+|---------|---------|------|-------------|
+| `/help` | | local-jsx | Show help |
+| `/cost` | | local | Show session costs |
+| `/usage` | | local | Show usage stats |
+| `/stats` | | local | Show performance stats |
+| `/status` | | local | Show session status |
+| `/version` | | local | Show version |
+| `/doctor` | | local-jsx | Run diagnostics |
+
+### Utilities
+
+| Command | Aliases | Type | Description |
+|---------|---------|------|-------------|
+| `/copy` | | local | Copy last response to clipboard |
+| `/export` | | local | Export conversation |
+| `/memory` | | local-jsx | View/edit memory |
+| `/voice` | | local-jsx | Voice input |
+| `/vim` | | local | Toggle vim mode |
+| `/keybindings` | | local-jsx | Configure keybindings |
+| `/rename` | | local | Rename session |
+| `/stickers` | | local-jsx | Sticker system |
+
+## Command Availability
+
+### Internal-Only Commands
+
+Commands restricted to `USER_TYPE === 'ant'`:
+`backfill-sessions`, `break-cache`, `bughunter`, `commit`, `commit-push-pr`, `ctx_viz`, `good-claude`, `issue`, `init-verifiers`, `mock-limits`, `bridge-kick`, `ultraplan`, `autofix-pr`, and more.
+
+### Remote-Safe Commands
+
+Commands safe in `--remote` mode: `session`, `exit`, `clear`, `help`, `theme`, `color`, `vim`, `cost`, `usage`, `copy`, `btw`, `feedback`, `plan`, `keybindings`, `statusline`, `stickers`, `mobile`.
+
+### Bridge-Safe Commands
+
+Local commands safe over Remote Control bridge: `compact`, `clear`, `cost`, `summary`, `release-notes`, `files`.

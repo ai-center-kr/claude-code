@@ -1,0 +1,128 @@
+---
+title: "UI Components and Message Rendering"
+description: "The 130+ top-level React/Ink components powering Claude Code's terminal UI and message rendering system"
+---
+
+All UI components are compiled with the React Compiler for automatic memoization. The framework is Ink -- a terminal React renderer using Box/Text primitives with Yoga flexbox layout.
+
+<Note>
+Full spec: [`spec/04_components_core_messages.md`](https://github.com/anthropics/claude-code/blob/main/spec/04_components_core_messages.md)
+</Note>
+
+## Architecture
+
+Components use these core Ink primitives throughout:
+
+- `Box`, `Text` -- layout and text
+- `useInput`, `useTheme`, `useTerminalFocus` -- Ink hooks
+- `Ansi`, `RawAnsi`, `NoSelect`, `Link` -- special rendering nodes
+- `ScrollBox`, `ScrollBoxHandle` -- scrollable regions
+
+Feature flags are evaluated at compile time via `feature('FLAG_NAME')` from `bun:bundle`. Global state is accessed via `useAppState`, `useSetAppState`.
+
+## Key Top-Level Components
+
+### App.tsx -- Provider Wrapper
+
+The top-level provider that nests all global contexts:
+
+```typescript
+type Props = {
+  getFpsMetrics: () => FpsMetrics | undefined
+  stats?: StatsStore
+  initialState: AppState
+  children: React.ReactNode
+}
+// Nesting: FpsMetricsProvider > StatsProvider > AppStateProvider
+```
+
+### AutoUpdater.tsx
+
+npm-based auto-updater that polls GCS every 30 minutes for newer versions:
+
+| Behavior | Detail |
+|----------|--------|
+| Poll interval | 30 minutes |
+| Kill switch | `maxVersion` check |
+| Routes | Package manager / Native installer / npm |
+
+### BaseTextInput.tsx
+
+Low-level text input shared by `TextInput` and `VimTextInput`:
+- `useDeclaredCursor` for terminal cursor placement
+- `usePasteHandler` for clipboard paste
+- Highlight rendering support
+
+### BashModeProgress.tsx
+
+Renders in-progress bash command UI with streaming output:
+
+```typescript
+type Props = {
+  input: string              // Command being run
+  progress: ShellProgress    // Current shell progress
+  verbose: boolean
+}
+```
+
+## Message Components
+
+### Core Message Types
+
+<CardGroup cols={2}>
+  <Card title="AgentProgressLine" icon="robot">
+    Renders coordinator agent progress tree with tool use count, token count, and tree connectors.
+  </Card>
+  <Card title="ApproveApiKey" icon="key">
+    Dialog for approving/rejecting custom API keys found in environment.
+  </Card>
+  <Card title="AutoModeOptInDialog" icon="toggle-on">
+    Legal opt-in dialog for full agentic mode with three options: accept-default, accept, decline.
+  </Card>
+  <Card title="AwsAuthStatusBox" icon="cloud">
+    Bordered box showing AWS authentication status during auth flow.
+  </Card>
+</CardGroup>
+
+### AgentProgressLine Props
+
+| Prop | Type | Description |
+|------|------|-------------|
+| `agentType` | string | Type identifier of the sub-agent |
+| `toolUseCount` | number | Number of tool uses |
+| `tokens` | number \| null | Token count |
+| `isLast` | boolean | Controls tree connector character |
+| `isResolved` | boolean | Whether task is complete |
+| `isError` | boolean | Whether task errored |
+| `shouldAnimate` | boolean | Whether to animate spinner |
+
+### AutoModeOptInDialog
+
+Contains legally-reviewed description text. Logs telemetry events:
+- `tengu_auto_mode_opt_in_dialog_shown`
+- `tengu_auto_mode_opt_in_dialog_accept`
+- `tengu_auto_mode_opt_in_dialog_accept_default`
+- `tengu_auto_mode_opt_in_dialog_decline`
+
+## Component Categories
+
+The full component tree includes 389 files across 32 subdirectories:
+
+| Category | Count | Purpose |
+|----------|-------|---------|
+| `agents/` | 15+ | Agent creation, editing, listing |
+| `permissions/` | 10+ | Permission dialogs and prompts |
+| `design-system/` | 20+ | Themed primitives (Box, Text, Button) |
+| `messages/` | 30+ | Message rendering for all types |
+| `mcp/` | 10+ | MCP server management UI |
+| `tasks/` | 8+ | Task list and management |
+| `teams/` | 5+ | Team collaboration UI |
+| `diff/` | 5+ | Diff viewer |
+| `wizard/` | 8+ | Multi-step wizard flows |
+| `shell/` | 5+ | Shell output rendering |
+| `skills/` | 5+ | Skills browser |
+| `ui/` | 15+ | Shared UI primitives |
+| `Settings/` | 8+ | Settings editor |
+| `PromptInput/` | 5+ | Input area with completions |
+| `Spinner/` | 3+ | Loading animations |
+| `HelpV2/` | 5+ | Help system |

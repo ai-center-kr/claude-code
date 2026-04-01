@@ -1,0 +1,80 @@
+---
+title: "Uncover Undercover Mode"
+description: "Anthropic employees use Claude Code on open-source repositories. Undercover Mode prevents the AI from accidentally revealing internal information in commits and PRs."
+---
+
+## Hiding in Plain Sight
+
+Anthropic employees (identified by `USER_TYPE === 'ant'`) use Claude Code to contribute to public and open-source repositories. **Undercover Mode** prevents the AI from accidentally revealing internal information -- model codenames, project names, Slack channels, or even the fact that it is an AI -- in commits, PRs, and code comments.
+
+The system lives in `utils/undercover.ts` and is dead-code-eliminated from external builds.
+
+## The System Prompt Injection
+
+When Undercover Mode is active, this instruction is injected into the system prompt:
+
+```
+## UNDERCOVER MODE - CRITICAL
+
+You are operating UNDERCOVER in a PUBLIC/OPEN-SOURCE repository. Your commit
+messages, PR titles, and PR bodies MUST NOT contain ANY Anthropic-internal
+information. Do not blow your cover.
+
+NEVER include in commit messages or PR descriptions:
+- Internal model codenames (animal names like Capybara, Tengu, etc.)
+- Unreleased model version numbers (e.g., opus-4-7, sonnet-4-8)
+- Internal repo or project names
+- Internal tooling, Slack channels, or short links (e.g., go/cc, #claude-code-...)
+- The phrase "Claude Code" or any mention that you are an AI
+- Co-Authored-By lines or any other attribution
+```
+
+## Activation Logic
+
+Undercover Mode follows a strict activation hierarchy:
+
+| Condition | Result |
+|-----------|--------|
+| `CLAUDE_CODE_UNDERCOVER=1` env var | **Forced ON** (even in internal repos) |
+| Repo remote matches internal allowlist | **OFF** (safe internal repo) |
+| All other cases | **ON** (default to undercover) |
+
+The critical design principle: **there is no force-OFF**. The code explicitly states:
+
+> *"If we're not confident we're in an internal repo, we stay undercover."*
+
+This means the system defaults to maximum caution. Only repos whose git remote matches Anthropic's internal allowlist are exempted.
+
+## What This Confirms
+
+The existence of Undercover Mode confirms several things:
+
+1. **Anthropic employees actively use Claude Code to contribute to open-source** -- and the AI is instructed to hide that it is an AI
+2. **Internal model codenames are animal names** -- Capybara, Tengu, Fennec, and others
+3. **"Tengu"** appears hundreds of times as a prefix for feature flags and analytics events -- it is Claude Code's internal project codename
+4. The commit command (`/commit`) checks `isUndercover()` and prepends undercover instructions when active, including suppressing the `Co-Authored-By` attribution line
+
+## Integration Points
+
+Undercover Mode affects multiple systems:
+
+| System | Behavior When Undercover |
+|--------|-------------------------|
+| `/commit` command | Suppresses Co-Authored-By, sanitizes commit messages |
+| PR creation | Removes internal references from titles and bodies |
+| System prompt | Full undercover instruction block injected |
+| Attribution | No AI attribution in any output |
+
+<Note>
+  The irony is striking: Anthropic built an entire subsystem to prevent their AI from accidentally revealing internal codenames in git commits... and then shipped the entire source code in a `.map` file, exposing every codename in the process.
+</Note>
+
+## Dead Code Elimination
+
+All Undercover Mode code paths are gated behind `USER_TYPE === 'ant'` checks. In external builds, Bun's bundler constant-folds these checks to `false` and dead-code-eliminates the entire feature. The code never appears in the minified production bundle.
+
+However, source maps contain the original source code before dead code elimination. The `.map` file's `sourcesContent` array preserves every file, every comment, and every string literal -- including the undercover instructions and the internal allowlist.
+
+<Warning>
+  Undercover Mode only protects against AI-generated content. It does not prevent the source code itself from containing internal references -- which is exactly what the source map leak exposed.
+</Warning>

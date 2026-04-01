@@ -1,0 +1,200 @@
+---
+title: "Crate: cc-mcp"
+description: "Model Context Protocol client with JSON-RPC 2.0, stdio transport, tool/resource/prompt discovery, and multi-server management"
+sidebarTitle: "cc-mcp"
+---
+
+# cc-mcp
+
+MCP (Model Context Protocol) client implementation. MCP is a JSON-RPC 2.0 based protocol for connecting Claude to external tool and resource servers. This crate handles the full lifecycle from server spawning through capability discovery to tool invocation.
+
+## Architecture
+
+```
+┌────────────────────┐
+│    McpManager      │  Manages pool of server connections
+│  ├─ all_tool_defs  │
+│  ├─ call_tool      │
+│  └─ list_resources │
+└────────┬───────────┘
+         │ (1..N)
+┌────────▼───────────┐
+│     McpClient      │  Single server connection
+│  ├─ initialize     │  (handshake)
+│  ├─ list_tools     │
+│  ├─ call_tool      │
+│  ├─ list_resources │
+│  ├─ read_resource  │
+│  └─ list_prompts   │
+└────────┬───────────┘
+         │
+┌────────▼───────────┐
+│  StdioTransport    │  Subprocess stdin/stdout
+└────────────────────┘
+```
+
+## JSON-RPC 2.0 Types
+
+```rust
+pub struct JsonRpcRequest {
+    pub jsonrpc: String,    // "2.0"
+    pub id: Value,
+    pub method: String,
+    pub params: Option<Value>,
+}
+
+pub struct JsonRpcResponse {
+    pub jsonrpc: String,
+    pub id: Option<Value>,
+    pub result: Option<Value>,
+    pub error: Option<JsonRpcError>,
+}
+
+pub struct JsonRpcError {
+    pub code: i64,
+    pub message: String,
+    pub data: Option<Value>,
+}
+```
+
+## MCP Protocol Types
+
+### Server Capabilities
+
+After the initialize handshake, the server reports its capabilities:
+
+```rust
+pub struct ServerCapabilities {
+    pub tools: Option<ToolsCapability>,
+    pub resources: Option<ResourcesCapability>,
+    pub prompts: Option<PromptsCapability>,
+    pub logging: Option<Value>,
+}
+```
+
+### Tool Types
+
+```rust
+pub struct McpTool {
+    pub name: String,
+    pub description: Option<String>,
+    pub input_schema: Value,
+}
+
+pub struct CallToolResult {
+    pub content: Vec<McpContent>,
+    pub is_error: bool,
+}
+
+pub enum McpContent {
+    Text { text: String },
+    Image { data: String, mime_type: String },
+    Resource { resource: ResourceContents },
+}
+```
+
+### Resource Types
+
+```rust
+pub struct McpResource {
+    pub uri: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub mime_type: Option<String>,
+}
+
+pub struct ResourceContents {
+    pub uri: String,
+    pub mime_type: Option<String>,
+    pub text: Option<String>,
+    pub blob: Option<String>,
+}
+```
+
+### Prompt Types
+
+```rust
+pub struct McpPrompt {
+    pub name: String,
+    pub description: Option<String>,
+    pub arguments: Vec<McpPromptArgument>,
+}
+```
+
+## Transport Layer
+
+The `McpTransport` trait abstracts the communication channel:
+
+```rust
+#[async_trait]
+pub trait McpTransport: Send + Sync {
+    async fn send(&self, message: &JsonRpcRequest) -> anyhow::Result<()>;
+    async fn recv(&self) -> anyhow::Result<Option<JsonRpcResponse>>;
+    async fn close(&self) -> anyhow::Result<()>;
+}
+```
+
+### StdioTransport
+
+Spawns a subprocess and communicates via stdin/stdout. A background tokio task reads stdout lines and forwards them through an unbounded channel.
+
+```rust
+let transport = StdioTransport::spawn(&config).await?;
+```
+
+## McpClient
+
+A fully initialized client connected to a single MCP server:
+
+```rust
+// Connect and complete the initialize handshake
+let client = McpClient::connect_stdio(&config).await?;
+
+// Use discovered capabilities
+let tools = client.list_tools().await?;
+let result = client.call_tool("search", Some(args)).await?;
+let resources = client.list_resources().await?;
+let content = client.read_resource("file:///path").await?;
+let prompts = client.list_prompts().await?;
+```
+
+The `connect_stdio` method:
+1. Spawns the subprocess
+2. Sends `initialize` request (protocol version `2024-11-05`)
+3. Sends `notifications/initialized` notification
+4. Discovers tools, resources, and prompts based on server capabilities
+
+## McpManager
+
+Manages a pool of MCP server connections:
+
+```rust
+let manager = McpManager::connect_all(&configs).await;
+
+// Get all tool definitions (prefixed with server name)
+let defs: Vec<(String, ToolDefinition)> = manager.all_tool_definitions();
+
+// Call a tool (routes to correct server by prefix)
+let result = manager.call_tool("myserver_search", Some(args)).await?;
+
+// List resources across all servers
+let resources = manager.list_all_resources(None).await;
+```
+
+Tool names are prefixed with the server name to avoid conflicts: `<server_name>_<tool_name>`.
+
+### Manager Methods
+
+| Method | Description |
+|--------|-------------|
+| `connect_all(configs)` | Connect to all configured servers |
+| `all_tool_definitions()` | Get prefixed tool definitions from all servers |
+| `call_tool(prefixed_name, args)` | Route and execute a tool call |
+| `list_all_resources(filter)` | List resources from all/filtered servers |
+| `read_resource(server, uri)` | Read a specific resource |
+| `server_count()` | Number of connected servers |
+| `server_names()` | List connected server names |
+
+<Note>
+MCP tool results are converted to strings via `mcp_result_to_string()`, which concatenates text content, replaces images with `[image]`, and extracts text from resources.
+</Note>

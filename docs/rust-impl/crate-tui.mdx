@@ -1,0 +1,145 @@
+---
+title: "Crate: cc-tui"
+description: "Interactive terminal UI built with ratatui and crossterm -- message display, input handling, streaming, and permission dialogs"
+sidebarTitle: "cc-tui"
+---
+
+# cc-tui
+
+The terminal user interface crate, providing the full interactive experience for Claude Code. Built on `ratatui` (0.29) for rendering and `crossterm` (0.28) for terminal I/O with event streaming.
+
+## Features
+
+- Message display with syntax highlighting
+- Input prompt with history and cursor navigation
+- Streaming response rendering in real time
+- Tool execution progress display
+- Permission dialogs (Allow once / Allow always / Deny)
+- Cost and token tracking display
+- Help overlay
+- Ctrl+R history search
+
+## App State
+
+The `App` struct is the top-level TUI application state:
+
+```rust
+pub struct App {
+    // Core state
+    pub config: Config,
+    pub cost_tracker: Arc<CostTracker>,
+    pub messages: Vec<Message>,
+    pub input: String,
+    pub input_history: Vec<String>,
+    pub history_index: Option<usize>,
+    pub scroll_offset: usize,
+    pub is_streaming: bool,
+    pub streaming_text: String,
+    pub status_message: Option<String>,
+    pub should_quit: bool,
+    pub show_help: bool,
+
+    // Extended state
+    pub tool_use_blocks: Vec<ToolUseBlock>,
+    pub permission_request: Option<PermissionRequest>,
+    pub frame_count: u64,
+    pub token_count: u32,
+    pub cost_usd: f64,
+    pub model_name: String,
+    pub agent_status: Vec<(String, String)>,
+    pub history_search: Option<HistorySearch>,
+    pub cursor_pos: usize,
+}
+```
+
+## Tool Status Display
+
+Active and completed tool calls are tracked for UI rendering:
+
+```rust
+pub enum ToolStatus {
+    Running,
+    Done,
+    Error,
+}
+
+pub struct ToolUseBlock {
+    pub id: String,
+    pub name: String,
+    pub status: ToolStatus,
+    pub output_preview: Option<String>,
+}
+```
+
+## Permission Dialogs
+
+When a tool requires user approval, a modal dialog is displayed:
+
+```rust
+pub struct PermissionRequest {
+    pub tool_use_id: String,
+    pub tool_name: String,
+    pub description: String,
+    pub selected_option: usize,
+    pub options: Vec<PermissionOption>,
+}
+```
+
+The standard dialog offers three choices:
+- **Allow once** (key: `y`)
+- **Allow always** (key: `a`)
+- **Deny** (key: `n`)
+
+## History Search
+
+Ctrl+R activates incremental history search:
+
+```rust
+pub struct HistorySearch {
+    pub query: String,
+    pub matches: Vec<usize>,
+    pub selected: usize,
+}
+```
+
+The search filters `input_history` entries by case-insensitive substring matching and allows cycling through matches.
+
+## Key Bindings
+
+The TUI handles these keyboard events:
+
+| Key | Context | Action |
+|-----|---------|--------|
+| `Ctrl+C` | Streaming | Cancel current operation |
+| `Ctrl+C` | Idle | Quit application |
+| `Ctrl+D` | Empty input | Quit application |
+| `Ctrl+R` | Idle | Toggle history search |
+| `F1` | Any | Toggle help overlay |
+| `Enter` | Not streaming | Submit input |
+| `Up/Down` | Not streaming | Navigate input history |
+| `Left/Right` | Not streaming | Move cursor within input |
+| `Home/End` | Not streaming | Jump to start/end of input |
+| `Backspace` | Not streaming | Delete character before cursor |
+| `Delete` | Not streaming | Delete character at cursor |
+
+## Slash Command Integration
+
+The TUI re-exports slash command utilities:
+
+```rust
+pub use input::{is_slash_command, parse_slash_command};
+```
+
+These detect and parse `/command` patterns from user input for routing to the `cc-commands` crate.
+
+## Modules
+
+| Module | Purpose |
+|--------|---------|
+| `app` | Main application state and event loop |
+| `render` | UI layout and widget rendering |
+| `input` | Input parsing and slash command detection |
+
+<Tip>
+The `App::take_input()` method atomically takes the current input buffer, pushes it to history, resets the cursor position, and returns the text for processing.
+</Tip>

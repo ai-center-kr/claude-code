@@ -1,0 +1,164 @@
+---
+title: "Special Systems: Buddy, Voice, Skills, and More"
+description: "Deep dive into the Buddy companion, memory directory, keybindings, skills, voice, plugins, output styles, hooks schema, and migrations"
+---
+
+Claude Code includes several specialized subsystems beyond the core query-tool loop. These add personality, persistence, extensibility, and accessibility.
+
+<Note>
+Full spec: [`spec/11_special_systems.md`](https://github.com/anthropics/claude-code/blob/main/spec/11_special_systems.md)
+</Note>
+
+## Buddy (Companion/Tamagotchi) System
+
+A virtual companion that appears as an ASCII art sprite beside the prompt input. Gated behind the `BUDDY` feature flag, planned for April 1-7, 2026.
+
+### Architecture
+
+The system splits companion data into two parts:
+
+| Part | Type | Storage | Description |
+|------|------|---------|-------------|
+| **Bones** | `CompanionBones` | Never stored (deterministic) | Visual/stat data derived from `hash(userId + SALT)` |
+| **Soul** | `CompanionSoul` | Persisted to config | AI-generated name and personality |
+
+### Rolling Process (Seeded PRNG)
+
+Uses Mulberry32 PRNG seeded from `hashString(userId + 'friend-2026-401')`:
+
+1. Rarity tier (weighted random)
+2. Species (18 total)
+3. Eye style (6 types)
+4. Hat (8 types, none if common)
+5. Shiny flag (1% probability)
+6. Stats (peak/dump/scatter, floor scales with rarity)
+
+### Rarity Distribution
+
+| Rarity | Weight | Stars | Stat Floor |
+|--------|--------|-------|------------|
+| Common | 60% | 1 star | 5 |
+| Uncommon | 25% | 2 stars | 15 |
+| Rare | 10% | 3 stars | 25 |
+| Epic | 4% | 4 stars | 35 |
+| Legendary | 1% | 5 stars | 50 |
+
+### Species (18 Total)
+
+duck, goose, blob, cat, dragon, octopus, owl, penguin, turtle, snail, ghost, axolotl, capybara, cactus, robot, rabbit, mushroom, chonk
+
+Species names are encoded as `String.fromCharCode(...)` to avoid triggering build-time canary string scans.
+
+## Memory Directory (memdir) System
+
+Long-term memory stored as markdown files in `~/.claude/memory/`:
+
+- Memory scanning with relevance scoring
+- Auto-consolidation via "dream" service during idle
+- Context injection based on relevance
+- Per-project and global memory scopes
+
+## Keybindings System
+
+14 files managing keyboard shortcuts:
+
+- Custom keybinding definitions in `~/.claude/keybindings.json`
+- Chord bindings (multi-key sequences)
+- Context-aware activation (different bindings per mode)
+- Default bindings with override support
+
+## Skills System
+
+20 files implementing the skills marketplace:
+
+- Skills are reusable prompt templates with tool configurations
+- Bundled skills, user skills, and marketplace skills
+- Skill detection and auto-invocation
+- Skill change detection for live updates
+- Directory-based skill discovery
+
+## Voice System
+
+Speech-to-text input:
+
+| File | Purpose |
+|------|---------|
+| `services/voice.ts` | Voice input processing |
+| `services/voiceKeyterms.ts` | Key term recognition |
+| `services/voiceStreamSTT.ts` | Streaming speech-to-text |
+| `context/voice.tsx` | Voice state context |
+
+## Plugins System
+
+2 core files for extensibility:
+
+- Plugin loading and validation
+- Plugin-contributed commands, tools, and agents
+- Plugin directory configuration
+- Session-only and persistent plugins
+
+## Output Styles
+
+Configurable output formatting:
+
+```typescript
+// outputStyles/ directory
+// Loads output style configuration
+// Applies formatting to AI responses
+// Supports custom style definitions
+```
+
+## Hooks Schema
+
+User-defined hooks for automation:
+
+| Event | Trigger |
+|-------|---------|
+| `PreToolUse` | Before tool execution |
+| `PostToolUse` | After tool execution |
+| `Notification` | On notification |
+| `Stop` | On turn completion |
+
+Hooks are configured in `settings.json` and executed by the harness.
+
+## Native TypeScript Ports (`native-ts/`)
+
+4 files providing TypeScript implementations of performance-critical operations previously requiring native bindings.
+
+## MoreRight Hook (`moreright/`)
+
+Single hook for detecting content overflow to the right of the terminal viewport.
+
+## Migrations
+
+11 migration files handling settings evolution:
+
+| Migration | Purpose |
+|-----------|---------|
+| Auto-updates to settings | Move config format |
+| Bypass permissions | Move flag location |
+| MCP server enable | Move setting |
+| Model renames | Sonnet 4.5 -> 4.6, Opus -> Opus 1m |
+| Bridge rename | REPL bridge -> remote control |
+| Fennec to Opus | Internal model migration |
+
+## Core Type Definitions (`types/`)
+
+| File | Defines |
+|------|---------|
+| `ids.ts` | Branded ID types (SessionId, AgentId, etc.) |
+| `permissions.ts` | Permission modes, rules, decisions |
+| `command.ts` | Command interface and types |
+| `hooks.ts` | Hook event types and matchers |
+| `plugin.ts` | Plugin interface |
+| `logs.ts` | Log entry types |
+| `textInputTypes.ts` | Text input state types |
+
+## Remote Session System (`remote/`)
+
+4 files managing remote session connections:
+
+- Session discovery and listing
+- Remote session attachment
+- Session state synchronization
+- Connection health monitoring

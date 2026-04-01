@@ -1,0 +1,155 @@
+---
+title: "Browse the Complete Tool Registry"
+description: "Claude Code ships 40+ tools covering file operations, shell execution, web access, multi-agent orchestration, and more -- all registered through a unified framework."
+---
+
+## 40+ Tools Behind the CLI
+
+What looks like a simple coding assistant from the outside is backed by a comprehensive tool registry with over 40 tools spanning file operations, shell execution, web access, agent orchestration, task management, and internal-only capabilities.
+
+## The Tool Framework
+
+Every tool in Claude Code implements the `Tool` interface defined in `src/Tool.ts`:
+
+```typescript
+export type Tool<Input, Output, Progress> = {
+  // Identity
+  name: string
+  isMcp?: boolean
+  alwaysLoad?: boolean
+  shouldDefer?: boolean
+
+  // Schema (lazy init via getters)
+  readonly inputSchema: Input
+  readonly outputSchema?: Output
+
+  // Metadata
+  description(): Promise<string>
+  prompt(): Promise<string>
+  userFacingName(input?): string
+
+  // Capability flags
+  isEnabled(permissionContext?): boolean
+  isConcurrencySafe(input?): boolean
+  isReadOnly(input?): boolean
+  isDestructive?(input): boolean
+
+  // Execution
+  validateInput?(input): Promise<ValidationResult>
+  checkPermissions(input, context): Promise<PermissionDecision>
+  call(input, context): Promise<ToolResult<Output>>
+
+  // UI rendering (React / Ink)
+  renderToolUseMessage(input, options): ReactNode | null
+  renderToolResultMessage(output, ...): ReactNode | null
+}
+```
+
+Tools are constructed via `buildTool()`, which fills in safe defaults (enabled by default, not concurrency-safe, not read-only).
+
+## The Complete Tool Table
+
+| Tool | Category | Description |
+|------|----------|-------------|
+| **AgentTool** | Agent | Spawn child agents and subagents |
+| **BashTool** | Shell | Shell execution with optional sandboxing |
+| **PowerShellTool** | Shell | PowerShell execution (Windows) |
+| **FileReadTool** | File | Read files with line ranges and PDF support |
+| **FileEditTool** | File | String-replacement-based file editing |
+| **FileWriteTool** | File | Create or overwrite files |
+| **GlobTool** | Search | File pattern matching (uses native `bfs` when available) |
+| **GrepTool** | Search | Content search (uses native `ugrep` when available) |
+| **WebFetchTool** | Web | Fetch URLs and extract content |
+| **WebSearchTool** | Web | Web search via API |
+| **WebBrowserTool** | Web | Browser automation |
+| **NotebookEditTool** | File | Jupyter notebook cell editing |
+| **SkillTool** | Meta | Invoke user-defined skills |
+| **REPLTool** | Shell | Interactive VM shell (bare mode) |
+| **LSPTool** | Code | Language Server Protocol communication |
+| **AskUserQuestionTool** | Meta | Prompt user for input |
+| **EnterPlanModeTool** | Plan | Enter plan mode |
+| **ExitPlanModeV2Tool** | Plan | Exit plan mode with plan text |
+| **BriefTool** | KAIROS | Upload/summarize files to claude.ai |
+| **SendMessageTool** | Agent | Send messages to team members |
+| **TeamCreateTool** | Agent | Create agent teams |
+| **TeamDeleteTool** | Agent | Delete agent teams |
+| **TaskCreateTool** | Task | Create background tasks (v2) |
+| **TaskGetTool** | Task | Get task status (v2) |
+| **TaskListTool** | Task | List all tasks (v2) |
+| **TaskUpdateTool** | Task | Update task state (v2) |
+| **TaskOutputTool** | Task | Get task output |
+| **TaskStopTool** | Task | Stop a running task |
+| **TodoWriteTool** | Task | Write todos (legacy v1) |
+| **ListMcpResourcesTool** | MCP | List MCP server resources |
+| **ReadMcpResourceTool** | MCP | Read MCP resources |
+| **MCPTool** | MCP | Generic MCP tool execution |
+| **McpAuthTool** | MCP | MCP server authentication |
+| **SleepTool** | Utility | Async delays for KAIROS |
+| **SnipTool** | Utility | History snippet extraction |
+| **ToolSearchTool** | Meta | Discover available tools |
+| **ListPeersTool** | Agent | List peer agents (UDS inbox) |
+| **MonitorTool** | MCP | Monitor MCP servers |
+| **EnterWorktreeTool** | Git | Enter a git worktree |
+| **ExitWorktreeTool** | Git | Exit a git worktree |
+| **ScheduleCronTool** | Cron | Schedule cron jobs |
+| **CronCreateTool** | Cron | Create granular cron jobs |
+| **CronDeleteTool** | Cron | Delete cron jobs |
+| **CronListTool** | Cron | List cron jobs |
+| **RemoteTriggerTool** | Agent | Trigger remote agent sessions |
+| **WorkflowTool** | Automation | Execute workflow scripts |
+| **SyntheticOutputTool** | SDK | Structured output via dynamic JSON schemas |
+| **VerifyPlanExecutionTool** | Plan | Verify plan execution (gated) |
+| **CtxInspectTool** | Debug | Context window inspection (gated) |
+| **TerminalCaptureTool** | Debug | Terminal panel capture (gated) |
+
+### Internal-Only Tools
+
+| Tool | Description |
+|------|-------------|
+| **ConfigTool** | Modify Claude Code settings |
+| **TungstenTool** | Advanced internal features |
+| **SuggestBackgroundPRTool** | Suggest background PRs |
+| **SendUserFile** | Push files to user (KAIROS) |
+| **PushNotification** | Send push notifications (KAIROS) |
+| **SubscribePR** | Monitor PR activity (KAIROS) |
+
+## Tool Registration
+
+Tools are registered via `getAllBaseTools()` and filtered through multiple gates:
+
+```
+getAllBaseTools()
+  → Filter by feature flags (compile-time)
+  → Filter by USER_TYPE (ant vs external)
+  → Filter by environment flags
+  → Filter by permission deny rules
+  → Available tool set
+```
+
+<Note>
+  Tools with `shouldDefer: true` are not loaded into the initial prompt. They are fetched on-demand via `ToolSearchTool` to keep the prompt size manageable when 40+ tools are available.
+</Note>
+
+## Tool Schema Cache
+
+The `toolSchemaCache.ts` module caches JSON schemas for prompt efficiency. Since tool descriptions and schemas are included in every API call, caching prevents redundant serialization:
+
+```typescript
+// Cached per tool name, invalidated on tool set changes
+toolSchemaCache: Map<string, CachedToolSchema>
+```
+
+## Tool Context
+
+Every `call()` and `checkPermissions()` receives a `ToolUseContext` with:
+
+- **Configuration**: available tools, commands, MCP clients, model info
+- **Abort signal**: for cancellation propagation
+- **App state**: getters and setters for global state
+- **File tracking**: `readFileState` map for read-before-write enforcement
+- **Permission context**: current mode, rules, and working directories
+- **Agent context**: whether this is a subagent, coordinator, or standalone
+
+<Tip>
+  The `readFileState` tracking ensures that `FileEditTool` and `FileWriteTool` cannot modify files that have not been read first in the current session -- a safety mechanism that prevents blind overwrites.
+</Tip>

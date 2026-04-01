@@ -1,0 +1,127 @@
+---
+title: "Understand the Crate Architecture"
+description: "Dependency graph, key design patterns, and shared dependencies across the 10-crate Cargo workspace"
+sidebarTitle: "Architecture"
+---
+
+# Crate Architecture
+
+The Rust reimplementation is organized as a Cargo workspace with 10 member crates. The architecture follows a strict layered dependency model where higher-level crates depend on lower-level ones, and `cc-core` sits at the foundation.
+
+## Directory Layout
+
+```
+src-rust/
+├── Cargo.toml                  # Workspace root
+└── crates/
+    ├── core/       (cc-core)       # Shared types, config, permissions, history, hooks
+    ├── api/        (cc-api)        # API client + SSE streaming
+    ├── tools/      (cc-tools)      # All tool implementations (33 tools)
+    ├── query/      (cc-query)      # Agentic query loop, compact, cron scheduler
+    ├── tui/        (cc-tui)        # ratatui terminal UI
+    ├── commands/   (cc-commands)   # Slash command implementations
+    ├── mcp/        (cc-mcp)        # MCP (Model Context Protocol) client
+    ├── bridge/     (cc-bridge)     # Bridge to claude.ai web UI
+    ├── cli/        (claude-code)   # Binary entry point
+    └── buddy/      (cc-buddy)      # Tamagotchi companion system
+```
+
+## Dependency Graph
+
+The dependency flow is strictly acyclic. `cc-core` is the foundation crate that every other crate depends on.
+
+```
+                    ┌──────────┐
+                    │  cc-cli  │  (binary entry point)
+                    └────┬─────┘
+                         │
+          ┌──────────────┼──────────────┐
+          ▼              ▼              ▼
+    ┌──────────┐  ┌──────────┐  ┌──────────┐
+    │ cc-query │  │  cc-tui  │  │cc-bridge │
+    └────┬─────┘  └────┬─────┘  └────┬─────┘
+         │             │              │
+    ┌────┴────┐        │              │
+    ▼         ▼        │              │
+┌────────┐┌───────┐   │              │
+│cc-tools││cc-api │   │              │
+└───┬────┘└───┬───┘   │              │
+    │         │        │              │
+    ▼         ▼        ▼              ▼
+    ┌──────────────────────────────────┐
+    │            cc-core               │
+    └──────────────────────────────────┘
+
+    ┌──────────┐  ┌──────────┐  ┌──────────┐
+    │cc-commands│  │  cc-mcp  │  │ cc-buddy │
+    └────┬─────┘  └────┬─────┘  └────┬─────┘
+         │             │              │
+         ▼             ▼              ▼
+         └─────────► cc-core ◄────────┘
+```
+
+<Note>
+`AgentTool` lives in `cc-query` rather than `cc-tools` to avoid a circular dependency: `cc-tools` would need `cc-query` (for the nested query loop), but `cc-query` already depends on `cc-tools`.
+</Note>
+
+## Key Shared Dependencies
+
+All versions are pinned in the workspace `Cargo.toml` and inherited by member crates.
+
+| Category | Crate | Version | Purpose |
+|----------|-------|---------|---------|
+| **Async** | `tokio` | 1.44 | Async runtime (full features) |
+| | `tokio-stream` | 0.1 | Stream combinators |
+| | `futures` | 0.3 | Future combinators |
+| | `async-trait` | 0.1 | Async trait support |
+| **HTTP** | `reqwest` | 0.12 | HTTP client (json, stream, native-tls) |
+| | `reqwest-eventsource` | 0.6 | SSE client |
+| **Serialization** | `serde` | 1 | Serialization framework |
+| | `serde_json` | 1 | JSON support |
+| | `toml` | 0.8 | TOML config files |
+| **CLI** | `clap` | 4 | Argument parsing (derive, env, string) |
+| **TUI** | `ratatui` | 0.29 | Terminal UI framework |
+| | `crossterm` | 0.28 | Terminal I/O (event-stream) |
+| **Errors** | `anyhow` | 1 | Ad-hoc error handling |
+| | `thiserror` | 2 | Typed error definitions |
+| **Logging** | `tracing` | 0.1 | Structured logging |
+| | `tracing-subscriber` | 0.3 | Log output (env-filter, json) |
+| **Concurrency** | `parking_lot` | 0.12 | Fast mutexes / RwLocks |
+| | `dashmap` | 6 | Concurrent hash maps |
+| | `tokio-util` | 0.7 | Codec, sync utilities |
+| **Text** | `similar` | 2 | Diff algorithm |
+| | `syntect` | 5 | Syntax highlighting |
+| | `regex` | 1 | Regular expressions |
+| **Crypto** | `sha2` | 0.10 | SHA-256 hashing |
+| | `base64` | 0.22 | Base64 encoding |
+| **Process** | `nix` | 0.29 | Unix process/signal/user |
+| **Schema** | `schemars` | 0.8 | JSON Schema generation |
+
+## Design Patterns
+
+### Trait-Based Tool System
+
+Every tool implements the `Tool` trait from `cc-tools`. This enables dynamic dispatch, tool discovery, and uniform permission checking:
+
+```rust
+#[async_trait]
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn permission_level(&self) -> PermissionLevel;
+    fn input_schema(&self) -> Value;
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult;
+}
+```
+
+### Streaming SSE Architecture
+
+The API layer uses a producer-consumer pattern: a background tokio task reads the SSE byte stream and emits typed `StreamEvent` values through an `mpsc` channel. The `StreamAccumulator` reconstructs the full message from incremental deltas.
+
+### Permission Model
+
+Four permission modes (`Default`, `AcceptEdits`, `BypassPermissions`, `Plan`) gate tool execution. The `PermissionHandler` trait abstracts over interactive (TUI prompt) and automatic (CI/batch) permission strategies.
+
+### Hook System
+
+Lifecycle hooks (`PreToolUse`, `PostToolUse`, `Stop`, `UserPromptSubmit`, `Notification`) allow external scripts to observe and optionally block tool executions. Hooks are configured via `settings.json` and executed as subprocesses.

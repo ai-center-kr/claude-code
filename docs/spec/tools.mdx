@@ -1,0 +1,193 @@
+---
+title: "Explore the 40+ Tool Implementations"
+description: "Complete reference for the Claude Code tool framework, including the base Tool interface, permission system, and all tool implementations"
+---
+
+Claude Code provides 40+ tools that the AI can invoke during conversations. Each tool has a Zod-validated input schema, permission declarations, and React-based UI rendering.
+
+<Note>
+Full spec: [`spec/03_tools.md`](https://github.com/anthropics/claude-code/blob/main/spec/03_tools.md)
+</Note>
+
+## Tool Framework
+
+### Core Interface (`Tool.ts`)
+
+```typescript
+type Tool<Input, Output, Progress> = {
+  // Identity
+  name: string
+  isMcp?: boolean
+  alwaysLoad?: boolean
+  shouldDefer?: boolean
+
+  // Schema
+  readonly inputSchema: Input
+  readonly outputSchema?: ZodType<Output>
+
+  // Metadata
+  description(): Promise<string>
+  prompt(): Promise<string>
+  userFacingName(input?): string
+
+  // Capability flags
+  isEnabled(permissionContext?): boolean
+  isConcurrencySafe(input?): boolean
+  isReadOnly(input?): boolean
+  isDestructive?(input): boolean
+
+  // Execution
+  validateInput?(input): Promise<ValidationResult>
+  checkPermissions(input, context): Promise<PermissionDecision>
+  call(input, context): Promise<ToolResult<Output>>
+
+  // UI rendering
+  renderToolUseMessage(input, options): ReactNode | null
+  renderToolResultMessage(output, ...): ReactNode | null
+}
+```
+
+### buildTool() Defaults
+
+| Field | Default |
+|-------|---------|
+| `isEnabled` | `() => true` |
+| `isConcurrencySafe` | `() => false` |
+| `isReadOnly` | `() => false` |
+| `checkPermissions` | `async () => ({ behavior: 'allow' })` |
+
+### ToolUseContext
+
+The context passed to every tool call:
+
+```typescript
+type ToolUseContext = {
+  options: { commands, tools, mcpClients, mainLoopModel, thinkingConfig }
+  abortController: AbortController
+  getAppState(): AppState
+  setAppState(fn): void
+  readFileState: Map<string, { mtime: number; content: string }>
+  permissionContext: ToolPermissionContext
+  setToolJSX: SetToolJSXFn
+  onPermissionRequest(request): Promise<PermissionDecision>
+  agentId?: AgentId
+  isSubagent?: boolean
+}
+```
+
+## Tool Catalog
+
+### Core File Tools
+
+<CardGroup cols={2}>
+  <Card title="FileReadTool" icon="file">
+    Read files with line range support, PDF extraction, image reading, and Jupyter notebook parsing.
+  </Card>
+  <Card title="FileWriteTool" icon="pen">
+    Write complete files with read-before-write enforcement and mtime validation.
+  </Card>
+  <Card title="FileEditTool" icon="pencil">
+    Exact string replacement edits with `replace_all` support and unique-match validation.
+  </Card>
+  <Card title="NotebookEditTool" icon="book">
+    Edit Jupyter notebook cells (add, remove, replace).
+  </Card>
+</CardGroup>
+
+### Shell Execution Tools
+
+| Tool | Description |
+|------|-------------|
+| **BashTool** | Execute bash commands with timeout, sandbox support, CWD tracking |
+| **PowerShellTool** | Windows PowerShell execution with sandbox wrapping |
+
+### Search Tools
+
+| Tool | Description |
+|------|-------------|
+| **GlobTool** | Fast file pattern matching with glob patterns |
+| **GrepTool** | Ripgrep-based content search with regex support |
+
+### Agent / Multi-Agent Tools
+
+| Tool | Description |
+|------|-------------|
+| **AgentTool** | Spawn sub-agents as isolated Claude instances |
+| **TeamCreateTool** | Create collaborative agent teams |
+| **TeamDeleteTool** | Delete agent teams |
+| **SendMessageTool** | Send messages between teammates |
+
+### Task Management Tools
+
+| Tool | Version | Description |
+|------|---------|-------------|
+| **TodoWriteTool** | V1 | Simple todo list management |
+| **TaskCreateTool** | V2 | Create structured tasks |
+| **TaskGetTool** | V2 | Get task details |
+| **TaskUpdateTool** | V2 | Update task status |
+| **TaskListTool** | V2 | List all tasks |
+| **TaskStopTool** | - | Stop a running task |
+| **TaskOutputTool** | - | Get task output |
+
+### Web Tools
+
+| Tool | Description |
+|------|-------------|
+| **WebFetchTool** | Fetch web pages with markdown conversion |
+| **WebSearchTool** | Web search via API |
+
+### MCP Integration Tools
+
+| Tool | Description |
+|------|-------------|
+| **MCPTool** | Execute MCP server tools |
+| **McpAuthTool** | Handle MCP authentication |
+| **ListMcpResourcesTool** | List MCP resources |
+| **ReadMcpResourceTool** | Read MCP resources |
+
+### Plan Mode Tools
+
+| Tool | Description |
+|------|-------------|
+| **EnterPlanModeTool** | Enter plan/read-only mode |
+| **ExitPlanModeV2Tool** | Exit plan mode |
+
+### Scheduling Tools
+
+| Tool | Description |
+|------|-------------|
+| **CronCreateTool** | Create scheduled tasks |
+| **CronDeleteTool** | Delete scheduled tasks |
+| **CronListTool** | List scheduled tasks |
+
+### Meta / Discovery Tools
+
+| Tool | Description |
+|------|-------------|
+| **ToolSearchTool** | Search and discover deferred tools |
+| **AskUserQuestionTool** | Ask the user a question |
+| **SkillTool** | Execute skills within conversation |
+| **ConfigTool** | Read/write configuration |
+
+### Special Mode Tools
+
+| Tool | Description |
+|------|-------------|
+| **BriefTool** | Send brief user messages (Kairos mode) |
+| **SleepTool** | Pause execution |
+| **RemoteTriggerTool** | Trigger remote operations |
+| **SyntheticOutputTool** | Structured output for SDK |
+
+## Permission System
+
+```typescript
+type ToolPermissionContext = {
+  mode: PermissionMode
+  // 'default' | 'plan' | 'auto' | 'bypassPermissions' | 'acceptEdits'
+}
+```
+
+Each tool's `checkPermissions()` returns a `PermissionDecision`:
+- `allow` - proceed with execution
+- `deny` - block with reason
+- `ask` - prompt user for approval

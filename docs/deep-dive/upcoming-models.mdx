@@ -1,0 +1,112 @@
+---
+title: "Preview Upcoming Models"
+description: "The codebase contains references to unreleased Anthropic models including the Capybara family, Opus 4.7, and Sonnet 4.8 -- plus production engineering around Capybara's quirks."
+---
+
+## Models in the Pipeline
+
+The leaked source code contains references to unreleased Anthropic models that have not been publicly announced. These references appear in migration code, model configuration, prompt engineering, and feature flags.
+
+## The Capybara Model Family
+
+**Capybara** is a new model family already in its second version. The code reveals:
+
+- A variant called `capybara-v2-fast` being prepared with a **1M context window**
+- Both "fast" and "regular thinking" tiers
+- Active integration into Claude Code's model selection system
+- Production engineering to work around specific Capybara behaviors
+
+<Note>
+  The species name "capybara" also appears in the BUDDY companion system's species list, which is why all species names in `buddy/types.ts` are encoded as `String.fromCharCode()` arrays -- to avoid triggering the build-time string scanner that checks for model codenames.
+</Note>
+
+## Opus 4.7 and Sonnet 4.8
+
+Beyond Capybara, the codebase references the next generation of existing model families:
+
+| Model | Context |
+|-------|---------|
+| **Opus 4.7** | Referenced in code, mentioned in Undercover Mode's prohibited strings |
+| **Sonnet 4.8** | Referenced in code, mentioned in Undercover Mode's prohibited strings |
+
+The Undercover Mode instruction explicitly lists these as information that must not appear in public commits:
+
+```
+- Unreleased model version numbers (e.g., opus-4-7, sonnet-4-8)
+```
+
+## Current Model Configuration
+
+For reference, the current production model configuration:
+
+| Model | ID | Knowledge Cutoff |
+|-------|-----|-----------------|
+| Opus 4.6 | `claude-opus-4-6` | May 2025 |
+| Sonnet 4.6 | `claude-sonnet-4-6` | August 2025 |
+| Opus 4.5 | `claude-opus-4-5` | May 2025 |
+| Haiku 4.5 | `claude-haiku-4-5-20251001` | February 2025 |
+
+The frontier model is currently identified as `Claude Opus 4.6` with a `1M` context annotation.
+
+## Production Prompt-Shape Surgery
+
+The most revealing technical detail is the engineering Anthropic did to work around a **real production failure mode** with Capybara.
+
+### The Problem
+
+Capybara can **prematurely stop generating** when the prompt shape resembles a turn boundary after tool results. The model gets confused by certain patterns in the message sequence and interprets them as a signal to stop, cutting off its response.
+
+### The Fix
+
+Rather than waiting for a model fix, the team implemented **prompt-shape surgery** -- restructuring the prompt at the application layer to avoid triggering the issue:
+
+| Technique | Purpose |
+|-----------|---------|
+| Force a safe boundary marker (`Tool loaded.`) | Prevents ambiguous turn boundaries |
+| Relocate risky sibling blocks | Moves content that could trigger premature stops |
+| Smoosh reminder text into tool results | Maintains generation flow past dangerous points |
+| Add non-empty markers for empty tool outputs | Avoids confusing the model with void results |
+
+All of these mitigations are wrapped with **kill-switchable gates** using `tengu_*` prefixed flags, allowing staged rollout and quick rollback.
+
+## A/B Testing Evidence
+
+The code includes concrete A/B test evidence (not hand-wavy comments) indicating:
+
+- Comments like *"un-gate once validated on external via A/B"* confirm that **internal users (ant) are canary lanes** before broader rollout
+- The engineering was **launch-critical** and closely monitored
+- Specific metrics were tracked to validate the prompt-shape surgery
+
+This means Anthropic's internal users see new models and features first, with external rollout gated on A/B test results.
+
+## Model Codename History
+
+The migration system reveals the internal codename progression:
+
+| Migration | What It Tells Us |
+|-----------|-----------------|
+| `migrateFennecToOpus` | **"Fennec"** (the fox) was an Opus codename |
+| `migrateSonnet1mToSonnet45` | Sonnet with 1M context became Sonnet 4.5 |
+| `migrateSonnet45ToSonnet46` | Sonnet 4.5 was upgraded to Sonnet 4.6 |
+| `resetProToOpusDefault` | Pro users were reset to Opus at some point |
+| `fennec-fast-latest` to `opus[1m] + fastMode` | Fast mode was consolidated from a separate model variant to a flag |
+
+## Kill-Switchable Gates
+
+Every model-related feature is wrapped in remotely controllable gates:
+
+```
+tengu_ultraplan_model     -- ULTRAPLAN model selection
+tengu_penguins_off        -- Fast mode kill-switch
+tengu_*                   -- Various model-specific behavior flags
+```
+
+This architecture allows Anthropic to:
+- Roll out new models to internal users first
+- A/B test model performance on external users
+- Instantly revert if a model causes issues
+- Stage prompt-shape surgery independently from model launches
+
+<Warning>
+  Nothing in the code confirms a launch date or official SKU naming for Capybara, Opus 4.7, or Sonnet 4.8. However, the implementation signatures -- migration code, prompt engineering, A/B test infrastructure -- strongly indicate a model family that is actively being prepared for release.
+</Warning>

@@ -1,0 +1,165 @@
+---
+title: "Bridge Protocol and Remote Sessions"
+description: "The Remote Control bridge system: JWT auth, SSE/WebSocket/Hybrid transports, session lifecycle, and CLI framework"
+---
+
+The Bridge (Remote Control) system enables a local Claude Code CLI session to be driven from the claude.ai web application. It creates a bidirectional communication channel between the running CLI and the cloud backend (CCR).
+
+<Note>
+Full spec: [`spec/09_bridge_cli_remote.md`](https://github.com/anthropics/claude-code/blob/main/spec/09_bridge_cli_remote.md)
+</Note>
+
+## Architecture: Two Bridge Variants
+
+### V1 -- Environment-Based Bridge
+
+- Uses the Environments API (`/v1/environments/bridge`)
+- Bridge registers as an "environment", polls for "work"
+- Session transport: WebSocket (v1) or SSE+CCRClient (v2) via `HybridTransport`
+- `runBridgeLoop()` in `bridgeMain.ts` handles standalone mode
+
+### V2 -- Environment-Less Bridge
+
+- No Environments API layer
+- Direct flow: POST `/v1/code/sessions` -> POST sessions bridge -> `createV2ReplTransport()`
+- Only for REPL sessions; daemon/print stay on env-based
+- Gated by `tengu_bridge_repl_v2` GrowthBook flag
+
+## Deployment Modes
+
+| Mode | Entry | Description |
+|------|-------|-------------|
+| **REPL Bridge** | `initReplBridge()` | Always-on, runs inside existing REPL process |
+| **Standalone Bridge** | `claude remote-control` | Spawns child processes per session |
+
+### Standalone Spawn Modes
+
+| Mode | Behavior |
+|------|----------|
+| `single-session` | One session, bridge tears down when it ends |
+| `worktree` | Each session gets isolated git worktree |
+| `same-dir` | Sessions share cwd (may conflict) |
+
+## Core Data Structures
+
+### WorkSecret
+
+Decoded from base64url JSON in work response:
+
+```typescript
+type WorkSecret = {
+  version: number                    // Must be 1
+  session_ingress_token: string      // JWT for API calls
+  api_base_url: string
+  sources: Array<{
+    type: string
+    git_info?: { type, repo, ref?, token? }
+  }>
+  auth: Array<{ type: string; token: string }>
+  claude_code_args?: Record<string, string>
+  mcp_config?: unknown
+  environment_variables?: Record<string, string>
+  use_code_sessions?: boolean        // CCR v2 selector
+}
+```
+
+### BridgeConfig
+
+```typescript
+type BridgeConfig = {
+  dir: string
+  machineName: string
+  branch: string
+  gitRepoUrl: string | null
+  maxSessions: number
+  spawnMode: SpawnMode
+  verbose: boolean
+  sandbox: boolean
+  bridgeId: string               // Client-generated UUID
+  environmentId: string          // Client-generated UUID
+  apiBaseUrl: string
+  sessionIngressUrl: string
+  sessionTimeoutMs?: number      // Default: 24 hours
+}
+```
+
+### SessionHandle
+
+```typescript
+type SessionHandle = {
+  sessionId: string
+  done: Promise<SessionDoneStatus>  // 'completed' | 'failed' | 'interrupted'
+  kill(): void
+  forceKill(): void
+  activities: SessionActivity[]     // Ring buffer ~10 items
+  accessToken: string
+  writeStdin(data: string): void
+  updateAccessToken(token: string): void
+}
+```
+
+## Transport Layer
+
+<CardGroup cols={3}>
+  <Card title="SSE Transport" icon="signal-stream">
+    Server-Sent Events for real-time message streaming from server to client.
+  </Card>
+  <Card title="WebSocket Transport" icon="plug">
+    Full-duplex WebSocket connection for bidirectional communication.
+  </Card>
+  <Card title="Hybrid Transport" icon="shuffle">
+    Combines SSE (server->client) with HTTP POST (client->server) for optimal reliability.
+  </Card>
+</CardGroup>
+
+## JWT Authentication (`jwtUtils.ts`)
+
+- Bridge sessions are authenticated via JWT tokens
+- Tokens are passed in `WorkSecret.session_ingress_token`
+- Token refresh handled by `updateAccessToken()`
+- Separate auth flows for V1 (environment-based) and V2 (direct)
+
+## Session Lifecycle
+
+### REPL Bridge Flow
+
+1. `initReplBridge()` called from `useReplBridge` hook
+2. Registers with cloud backend
+3. Messages from claude.ai injected as user input
+4. Results streamed back through transport
+
+### Standalone Bridge Flow
+
+1. `runBridgeLoop()` starts polling for work
+2. On work received, spawns child `claude` process
+3. Transport connects child to cloud backend
+4. Session runs until completion/timeout/kill
+
+## Key Constants
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `DEFAULT_SESSION_TIMEOUT_MS` | 24 hours | Session auto-timeout |
+| `BRIDGE_LOGIN_INSTRUCTION` | string | Login requirement message |
+| `REMOTE_CONTROL_DISCONNECTED_MSG` | string | Disconnection message |
+
+## Bridge Debug & Fault Injection
+
+`bridgeDebug.ts` provides:
+- Debug file logging
+- Fault injection for testing
+- Connection state monitoring
+- Transport health checks
+
+## Permission Callbacks
+
+`bridgePermissionCallbacks.ts` handles:
+- Forwarding permission requests to the web UI
+- Collecting approval/denial from remote user
+- Timeout handling for unresponsive approvals
+
+## Crash Recovery (`bridgePointer.ts`)
+
+- Writes bridge state to a pointer file
+- On crash, new instance can recover session
+- Handles stale pointer cleanup

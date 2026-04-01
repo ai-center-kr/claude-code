@@ -1,0 +1,145 @@
+---
+title: "Crate: cc-buddy"
+description: "Tamagotchi companion system -- deterministic species, rarity, stats, and ASCII art sprites derived from user ID"
+sidebarTitle: "cc-buddy"
+---
+
+# cc-buddy
+
+The Tamagotchi/Buddy companion system for Claude Code. Every user gets a deterministic companion derived from their user ID via a seeded PRNG. The companion has a species, rarity, stats, eye style, hat, and shiny status -- all of which are immutable "bones" that can never be faked.
+
+The "soul" (name, personality, hatched_at) is AI-generated on first hatch and persisted to disk.
+
+## Determinism Model
+
+All companion attributes (bones) are derived from a SHA-256 hash of the user ID, passed through a Mulberry32 PRNG. This means:
+- The same user ID always produces the same companion
+- Stored config files cannot be edited to fake a rarity
+- Species array changes don't break existing companions
+
+```rust
+pub fn seed_from_user_id(user_id: &str) -> u32 {
+    // SHA-256(user_id + "friend-2026-401"), first 4 bytes as LE u32
+}
+```
+
+## Mulberry32 PRNG
+
+A tiny, fast 32-bit PRNG identical to the TypeScript version:
+
+```rust
+pub struct Mulberry32 {
+    state: u32,
+}
+
+impl Mulberry32 {
+    pub fn new(seed: u32) -> Self;
+    pub fn next_f64(&mut self) -> f64;  // [0, 1)
+    pub fn next_u32(&mut self) -> u32;
+}
+```
+
+## Species
+
+18 possible species, selected uniformly:
+
+| Species | | | |
+|---------|---------|---------|---------|
+| Duck | Goose | Blob | Cat |
+| Dragon | Octopus | Owl | Penguin |
+| Turtle | Snail | Ghost | Axolotl |
+| Capybara | Cactus | Robot | Rabbit |
+| Mushroom | Chonk | | |
+
+## Rarity
+
+Weighted random selection:
+
+| Rarity | Weight | Stat Floor | Stars |
+|--------|--------|------------|-------|
+| Common | 60% | 5 | 1 |
+| Uncommon | 25% | 15 | 2 |
+| Rare | 10% | 25 | 3 |
+| Epic | 4% | 35 | 4 |
+| Legendary | 1% | 50 | 5 |
+
+## Eye Styles
+
+6 eye glyphs rendered into sprite `{E}` slots:
+
+| Variant | Glyph |
+|---------|-------|
+| Dot | `·` |
+| Star | `\u2726` |
+| X | `x` |
+| Circle | `\u25C9` |
+| At | `@` |
+| Degree | `°` |
+
+## Hat Types
+
+8 hat variants. Common rarity companions always get `None`; other rarities pick uniformly:
+
+| Hat | Line Art |
+|-----|----------|
+| None | (empty) |
+| Crown | `\^^^/` |
+| Tophat | `[___]` |
+| Propeller | `-+-` |
+| Halo | `(   )` |
+| Wizard | `/^\` |
+| Beanie | `(___)` |
+| TinyDuck | `,>` |
+
+## Companion Stats
+
+Five stats rolled using a peak/dump system:
+
+```rust
+pub struct CompanionStats {
+    pub debugging: u8,
+    pub patience: u8,
+    pub chaos: u8,
+    pub wisdom: u8,
+    pub snark: u8,
+}
+```
+
+Rolling algorithm:
+1. One stat is the **peak** (boosted by +50..+79)
+2. One stat is the **dump** (lowered below floor)
+3. Remaining three scatter around the rarity floor
+
+Higher rarity means higher floor values, so rarer companions have better base stats.
+
+## CompanionBones
+
+The deterministic, immutable part of a companion:
+
+```rust
+pub struct CompanionBones {
+    pub rarity: Rarity,
+    pub species: Species,
+    pub eye: Eye,
+    pub hat: Hat,
+    pub shiny: bool,
+    pub stats: CompanionStats,
+}
+
+impl CompanionBones {
+    pub fn from_user_id(user_id: &str) -> Self;
+    pub fn roll(rng: &mut Mulberry32) -> Self;
+}
+```
+
+## Shiny Flag
+
+A boolean flag giving the companion a special visual treatment. The roll probability is based on rarity (rarer companions are more likely to be shiny).
+
+## Persistence
+
+The companion soul (AI-generated name, personality, hatch timestamp) is saved to `{config_dir}/companion.json`. The bones are never stored -- they are always re-derived from the user ID to prevent tampering.
+
+<Tip>
+You can preview different companions by passing different seeds to `CompanionBones::roll()` without needing a user ID.
+</Tip>

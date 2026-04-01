@@ -1,0 +1,139 @@
+---
+title: "Agent System and Permission Dialogs"
+description: "Full UI for creating, editing, and managing custom agents, plus the permission dialog system and design primitives"
+---
+
+The agents subsystem provides a complete UI for managing custom Claude sub-agents stored as Markdown files with YAML front matter in `.claude/agents/`. The permission system handles all tool authorization flows.
+
+<Note>
+Full spec: [`spec/05_components_agents_permissions_design.md`](https://github.com/anthropics/claude-code/blob/main/spec/05_components_agents_permissions_design.md)
+</Note>
+
+## Agent System
+
+### Agent Architecture
+
+Agents are stored as Markdown files with YAML front matter in `.claude/agents/`. The system supports multiple scopes:
+
+| Source | Location | Editable |
+|--------|----------|----------|
+| built-in | Bundled with app | No |
+| userSettings | `~/.claude/agents/` | Yes |
+| projectSettings | `.claude/agents/` | Yes |
+| policySettings | Enterprise policy | No |
+| flagSettings | CLI flags | No |
+| plugin | Plugin-contributed | No |
+
+### AgentsMenu -- State Machine
+
+The top-level orchestrator implements a state machine with modes:
+
+```
+list-agents -> agent-menu -> view-agent
+                          -> edit-agent
+                          -> delete-confirm
+           -> create-agent
+```
+
+### Agent Detail View
+
+`AgentDetail` renders a read-only view showing:
+- File path and description
+- Resolved tool list (with warnings for unrecognized tools)
+- Model display
+- Memory scope
+- Skills count
+- System prompt (non-built-in only)
+- Color swatch preview
+
+### Agent Editor
+
+Multi-step flow for editing agents:
+
+1. **Main menu**: Edit system prompt, description, tools, model, color, memory
+2. **Field editors**: Each uses shared sub-components (ToolSelector, ModelSelector, ColorPicker)
+3. **Save**: Calls `updateAgentFile()` and reloads app state
+4. **Validation**: `validateAgentType()` for name changes
+
+### Agent Creation Wizard
+
+The wizard walks through:
+
+1. Agent name/type entry
+2. System prompt editing
+3. Description (whenToUse) editing
+4. Tool selection
+5. Model selection
+6. Color picker
+7. Memory scope selection
+
+### ColorPicker
+
+Interactive color selector displaying all `AGENT_COLORS` plus "Automatic color":
+
+```typescript
+type Props = {
+  agentName: string
+  currentColor?: AgentColorName | 'automatic'
+  onConfirm: (color: AgentColorName | undefined) => void
+}
+```
+
+### AgentsList Features
+
+- Keyboard navigation with wrap-around
+- Grouped by source using `AGENT_SOURCE_GROUPS`
+- Override/shadow warnings when agents overlap scopes
+- "Create new agent" entry at top
+- Built-in agents rendered separately (dimmed)
+
+## Permission System
+
+### Permission Dialogs
+
+The permission UI handles authorization for every tool invocation:
+
+<CardGroup cols={2}>
+  <Card title="Tool Permission" icon="shield">
+    Standard permission prompt for individual tool calls with allow/deny options.
+  </Card>
+  <Card title="Batch Permission" icon="shield-check">
+    Bulk approval for multiple pending tool calls of the same type.
+  </Card>
+  <Card title="Always Allow" icon="lock-open">
+    Persistent permission grant stored in settings for specific tool patterns.
+  </Card>
+  <Card title="Trust Dialog" icon="handshake">
+    One-time trust acceptance dialog shown on first run in a directory.
+  </Card>
+</CardGroup>
+
+## Design System
+
+### Themed Primitives
+
+The design system provides themed versions of Ink primitives:
+
+| Component | Base | Purpose |
+|-----------|------|---------|
+| `ThemedBox` | `Box` | Box with theme-aware borders and colors |
+| `ThemedText` | `Text` | Text with theme-aware colors |
+| `Button` | Custom | Interactive button with states |
+| `Link` | Custom | Clickable hyperlinks in terminal |
+| `Dialog` | Custom | Modal dialog with options |
+| `Select` | Custom | Selection list with keyboard nav |
+
+### Feature Modules
+
+| Module | Components | Purpose |
+|--------|-----------|---------|
+| `wizard/` | WizardStep, WizardFlow | Multi-step wizard UI |
+| `mcp/` | McpServerList, McpConfig | MCP management |
+| `memory/` | MemoryView, MemoryEditor | Memory browsing |
+| `tasks/` | TaskList, TaskDetail | Task management |
+| `teams/` | TeamList, TeamChat | Team collaboration |
+| `diff/` | DiffView, HunkView | Code diff display |
+| `grove/` | GroveView | Grove browsing |
+| `sandbox/` | SandboxConfig | Sandbox settings |
+| `shell/` | ShellOutput | Shell result display |
+| `skills/` | SkillsBrowser | Skills marketplace |

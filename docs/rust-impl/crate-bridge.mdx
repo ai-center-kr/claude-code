@@ -1,0 +1,183 @@
+---
+title: "Crate: cc-bridge"
+description: "Remote control bridge connecting the local CLI to the claude.ai web UI for mobile and web-initiated sessions"
+sidebarTitle: "cc-bridge"
+---
+
+# cc-bridge
+
+The bridge connects the local Claude Code CLI to the claude.ai web UI, enabling mobile and web-initiated sessions. This crate implements the full bridge lifecycle: configuration, device fingerprinting, JWT handling, session management, and a long-polling event loop.
+
+## Architecture
+
+```
+┌──────────────────┐          ┌──────────────────┐
+│  claude.ai       │          │  Local CLI       │
+│  Web UI          │          │  (cc-bridge)     │
+│                  │  HTTP    │                  │
+│  User messages ──┼──────────┼─▶ BridgeMessage  │
+│                  │          │                  │
+│  ◀─── Events ───┼──────────┼── BridgeEvent    │
+│  (text deltas,   │          │  (from query     │
+│   tool status,   │          │   loop)          │
+│   permissions)   │          │                  │
+└──────────────────┘          └──────────────────┘
+```
+
+## JWT Utilities
+
+Client-side JWT decoding without signature verification, used only for expiry checks:
+
+```rust
+pub struct JwtClaims {
+    pub sub: Option<String>,
+    pub exp: Option<i64>,
+    pub iat: Option<i64>,
+    pub device_id: Option<String>,
+    pub session_id: Option<String>,
+}
+```
+
+Key functions:
+- `JwtClaims::decode(token)` -- decode payload segment, strips `sk-ant-si-` prefix
+- `jwt_is_expired(token)` -- returns `true` if expired or unparseable
+- `decode_jwt_expiry(token)` -- extract just the `exp` timestamp
+
+## Device Fingerprint
+
+Generates a stable SHA-256 fingerprint from machine-local information:
+
+```rust
+pub fn device_fingerprint() -> String {
+    // Combines: hostname + ":" + username + ":" + home_dir
+    // Returns: 64-char hex SHA-256 digest
+}
+```
+
+Consistent across Rust and TypeScript implementations so fingerprints match.
+
+## Bridge Configuration
+
+```rust
+pub struct BridgeConfig {
+    pub enabled: bool,
+    pub server_url: String,           // Default: "https://claude.ai"
+    pub device_id: String,            // SHA-256 fingerprint
+    pub session_token: Option<String>,
+    pub polling_interval_ms: u64,     // Default: 1000
+    pub max_reconnect_attempts: u32,  // Default: 10
+    pub session_timeout_ms: u64,      // Default: 24 hours
+    pub runner_version: String,
+}
+```
+
+The bridge is active only when both `enabled` is `true` **and** a `session_token` is present.
+
+### Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `CLAUDE_CODE_BRIDGE_URL` | Override server URL (also enables bridge) |
+| `CLAUDE_BRIDGE_BASE_URL` | Alternative URL override |
+| `CLAUDE_CODE_BRIDGE_TOKEN` | Session token |
+| `CLAUDE_BRIDGE_OAUTH_TOKEN` | Alternative token source |
+
+## Message Protocol
+
+### Inbound Messages (Web UI to CLI)
+
+```rust
+pub enum BridgeMessage {
+    UserMessage {
+        content: String,
+        session_id: String,
+        message_id: String,
+        attachments: Vec<BridgeAttachment>,
+    },
+    PermissionResponse {
+        request_id: String,
+        tool_use_id: Option<String>,
+        decision: PermissionDecision,
+    },
+    Cancel {
+        session_id: String,
+        reason: Option<String>,
+    },
+    Ping,
+}
+```
+
+### Outbound Events (CLI to Web UI)
+
+```rust
+pub enum BridgeEvent {
+    TextDelta { text: String, message_id: String, index: Option<usize> },
+    ToolStart { tool_name: String, tool_id: String, input_preview: Option<String> },
+    ToolEnd { tool_name: String, tool_id: String, result: String, is_error: bool },
+    PermissionRequest { request_id: String, tool_use_id: String, tool_name: String, description: String, options: Vec<String> },
+    TurnComplete { message_id: String, stop_reason: String, usage: Option<BridgeUsage> },
+    Error { message: String, code: Option<String> },
+    Pong { server_time: Option<u64> },
+    SessionState { session_id: String, state: BridgeSessionState },
+}
+```
+
+### Session States
+
+```rust
+pub enum BridgeSessionState {
+    Connecting,
+    Connected,
+    Idle,
+    Processing,
+    Disconnected,
+    Error,
+}
+```
+
+## BridgeSession
+
+Manages the HTTP connection, credentials, and poll loop:
+
+```rust
+let mut session = BridgeSession::new(config);
+session.register().await?;   // POST /api/claude_code/sessions
+session.deregister().await;  // DELETE /api/claude_code/sessions/{id}
+```
+
+### Poll Loop
+
+The `run_poll_loop` method runs until cancellation:
+
+1. Drain pending outgoing events and upload in a batch
+2. Long-poll for incoming messages (`GET /api/claude_code/sessions/{id}/poll`)
+3. Forward received messages through `msg_tx` channel
+4. Exponential backoff on errors (capped at 60s)
+5. Give up after `max_reconnect_attempts` consecutive failures
+6. Best-effort deregister on shutdown
+
+## Public API
+
+The simplest way to start the bridge:
+
+```rust
+let (msg_rx, event_tx, session_id) = start_bridge(config, cancel_token).await?;
+
+// Receive messages from web UI
+while let Some(msg) = msg_rx.recv().await {
+    // Handle BridgeMessage
+}
+
+// Send events to web UI
+event_tx.send(BridgeEvent::TextDelta { ... }).await?;
+```
+
+### Security
+
+- `BridgeConfig::validate_id(id, label)` prevents path traversal in URL segments
+- IDs must match `^[a-zA-Z0-9_-]+$`
+- All API calls use Bearer authentication
+
+<Note>
+Channels are bounded (messages: 64, events: 256) to provide back-pressure and prevent unbounded memory growth on a slow consumer.
+</Note>

@@ -1,0 +1,162 @@
+---
+title: "Catalog All 104 React Hooks"
+description: "Complete reference for all 104 React hooks powering Claude Code's UI, input handling, permissions, and real-time features"
+---
+
+Claude Code uses 104 custom React hooks organized across core utilities, input handling, permissions, swarm/teammate, IDE integration, remote sessions, plugins, and notifications.
+
+<Note>
+Full spec: [`spec/07_hooks.md`](https://github.com/anthropics/claude-code/blob/main/spec/07_hooks.md)
+</Note>
+
+## Core / Utility Hooks
+
+### useAfterFirstRender
+
+ANT-internal startup-time measurement. Writes startup time to stderr and calls `process.exit(0)` if `CLAUDE_CODE_EXIT_AFTER_FIRST_RENDER` is set.
+
+### useApiKeyVerification
+
+Manages full API key verification lifecycle:
+
+```typescript
+type ApiKeyVerificationResult = {
+  status: 'loading' | 'valid' | 'invalid' | 'missing' | 'error'
+  reverify: () => void
+  errorMessage?: string
+}
+```
+
+Guards against running `apiKeyHelper` scripts before trust dialog is dismissed.
+
+### useBlink
+
+Returns a blinking boolean flag synchronized with animation-frame clock:
+
+```typescript
+function useBlink(
+  enabled: boolean,
+  intervalMs?: number  // default: 530
+): [ref: RefObject, isVisible: boolean]
+```
+
+Pauses when terminal is blurred or component is offscreen.
+
+### useCommandQueue
+
+Exposes the unified command queue as a reactive array via `useSyncExternalStore`:
+
+```typescript
+function useCommandQueue(): readonly QueuedCommand[]
+```
+
+### useDoublePress
+
+Double-press detection within 800ms window:
+
+```typescript
+function useDoublePress(
+  setPending: (show: boolean) => void,
+  onDoublePress: () => void,
+  onFirstPress?: () => void
+): () => void
+```
+
+Used for Ctrl+C/D to exit and double-Escape to clear input.
+
+### useElapsedTime
+
+Human-readable elapsed time that updates while running:
+
+```typescript
+function useElapsedTime(
+  startTime: number,
+  isRunning: boolean,
+  ms?: number,         // update interval, default 1000
+  pausedMs?: number,
+  endTime?: number
+): string  // "5s", "1m 23s", "2h 5m"
+```
+
+### useExitOnCtrlCD
+
+Double-press Ctrl+C/D to exit with pending state:
+
+```typescript
+type ExitState = {
+  pending: boolean
+  keyName: string | null  // 'Ctrl-C' or 'Ctrl-D'
+}
+```
+
+### useCopyOnSelect
+
+Auto-copies selected text to clipboard on mouseup or double/triple-click.
+
+## Hook Categories
+
+<CardGroup cols={2}>
+  <Card title="Core / Utility" icon="gear">
+    `useAfterFirstRender`, `useApiKeyVerification`, `useBlink`, `useCommandQueue`, `useDoublePress`, `useElapsedTime`, `useExitOnCtrlCD`, `useCopyOnSelect`
+  </Card>
+  <Card title="Input & Text Editing" icon="keyboard">
+    `useTextInput`, `useVimTextInput`, `useInputHistory`, `useCompletions`, `useTabCompletion`, `usePasteHandler`
+  </Card>
+  <Card title="Permission & Tool-Use" icon="shield">
+    `useToolPermission`, `useToolPermissionState`, `usePermissionDialog`, `useBatchPermission`, `useAlwaysAllow`
+  </Card>
+  <Card title="Swarm / Teammate" icon="users">
+    `useSwarmState`, `useTeammateMessages`, `useCoordinatorProgress`, `useAgentSpawn`
+  </Card>
+  <Card title="IDE Integration" icon="code">
+    `useDirectConnect`, `useIdeState`, `useEditorSync`
+  </Card>
+  <Card title="Remote & Session" icon="globe">
+    `useReplBridge`, `useRemoteSession`, `useSessionSync`, `useSessionHistory`
+  </Card>
+  <Card title="Plugin & Suggestion" icon="puzzle-piece">
+    `usePluginState`, `usePromptSuggestions`, `useSkillState`
+  </Card>
+  <Card title="Notifications" icon="bell">
+    `useNotification`, `useToast`, `useSystemNotification`
+  </Card>
+</CardGroup>
+
+## Tool Permission Subsystem (`hooks/toolPermission/`)
+
+A dedicated subsystem for managing tool authorization:
+
+| Hook | Purpose |
+|------|---------|
+| `useToolPermissionState` | Track permission grants/denials per tool |
+| `usePermissionDialog` | Render and manage permission dialogs |
+| `useBatchPermission` | Bulk approval for multiple pending requests |
+| `useAlwaysAllow` | Persistent permission grants via settings |
+| `usePermissionContext` | Access current permission mode and rules |
+
+## Notification Hooks (`hooks/notifs/`)
+
+| Hook | Purpose |
+|------|---------|
+| `useNotification` | Display notifications in the status bar |
+| `useToast` | Show temporary toast messages |
+| `useSystemNotification` | Trigger OS-level notifications |
+| `useNotificationQueue` | Manage notification ordering |
+
+## Key Patterns
+
+### useSyncExternalStore
+
+Used extensively for subscribing to external state stores without causing unnecessary re-renders. Examples: `useCommandQueue`, `useElapsedTime`.
+
+### useCallback with Stable References
+
+Most hooks return stable callbacks via `useCallback` to prevent unnecessary re-renders in child components.
+
+### Feature Flag Guards
+
+Hooks check feature flags before activating:
+```typescript
+if (!feature('BUDDY')) return null
+if (!feature('BRIDGE_MODE')) return
+```

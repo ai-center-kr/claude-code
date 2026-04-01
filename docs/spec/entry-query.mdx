@@ -1,0 +1,146 @@
+---
+title: "Core Entry Point and Query Loop"
+description: "How Claude Code boots, dispatches commands, and executes the main query loop with token budgeting and cost tracking"
+---
+
+The entry system follows a two-phase pattern: a lightweight bootstrap dispatcher (`cli.tsx`) that checks for fast-paths before loading the full CLI (`main.tsx`), which then orchestrates the query engine.
+
+<Note>
+Full spec: [`spec/01_core_entry_query.md`](https://github.com/anthropics/claude-code/blob/main/spec/01_core_entry_query.md)
+</Note>
+
+## Entry Point Dispatch Flow
+
+```
+process.argv parsing
+  ├── --version / -v          -> print version, exit
+  ├── --dump-system-prompt    -> dump rendered system prompt
+  ├── --claude-in-chrome-mcp  -> runClaudeInChromeMcpServer()
+  ├── --daemon-worker=<kind>  -> runDaemonWorker()
+  ├── remote-control|rc|sync  -> bridgeMain()
+  ├── daemon                  -> daemonMain()
+  ├── ps|logs|attach|kill     -> background session handlers
+  ├── new|list|reply          -> templatesMain()
+  └── (default)               -> import main.tsx -> cliMain()
+```
+
+## Feature Flags at Bootstrap
+
+| Flag | Purpose |
+|------|---------|
+| `DUMP_SYSTEM_PROMPT` | Ant-only system prompt dump |
+| `CHICAGO_MCP` | Computer-use MCP server |
+| `DAEMON` | Daemon worker and supervisor |
+| `BRIDGE_MODE` | Remote control bridge |
+| `BG_SESSIONS` | Background session management |
+| `TEMPLATES` | Template job commands |
+| `BYOC_ENVIRONMENT_RUNNER` | BYOC headless runner |
+
+## main.tsx Startup Sequence
+
+The `main()` function orchestrates startup in strict order:
+
+1. Security setup (Windows PATH attack prevention)
+2. Warning handler initialization
+3. Signal handlers (SIGINT, exit cursor reset)
+4. Early arg processing (`cc://` URL rewriting, deep links, SSH)
+5. Settings flag parsing via `eagerLoadSettings()`
+6. Commander.js command tree setup
+7. `init()` call (configs, network, telemetry)
+8. Migration run at `CURRENT_MIGRATION_VERSION = 11`
+9. Trust dialog check
+10. Telemetry initialization
+11. Session setup (model, permissions, MCP, tools, agents)
+12. Launch: `showSetupScreens()` + `launchRepl()` or `runHeadless()`
+
+## CLI Flags
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `-p, --print <prompt>` | string | Non-interactive/headless mode |
+| `--model <model>` | string | Model override |
+| `--permission-mode <mode>` | enum | Permission mode for tool execution |
+| `--dangerously-skip-permissions` | boolean | Bypass all permission checks |
+| `--mcp-config <file>` | string | MCP config file path |
+| `--resume [sessionId]` | string? | Resume previous session |
+| `--bare` | boolean | Simple/stripped mode |
+| `--max-turns <n>` | number | Max turns in headless mode |
+| `--max-budget-usd <n>` | number | Cost budget limit |
+| `--worktree <branch>` | string | Git worktree mode |
+| `--agent <type>` | string | Main thread agent type |
+
+## Query Loop (`query.ts`)
+
+The core async query loop handles each conversational turn:
+
+```
+User input
+  -> Build API request (system prompt + history + tools)
+  -> Stream response from Claude API
+  -> Handle tool use (execute tools, feed results back)
+  -> Manage token budget and context compaction
+  -> Track cost
+  -> Repeat until no more tool calls
+```
+
+## QueryEngine.ts (SDK/Headless)
+
+The `QueryEngine` class provides a stateful wrapper for SDK and headless usage:
+
+- Maintains conversation state across turns
+- Handles model selection and fallback
+- Manages abort signals and cancellation
+- Provides structured output support
+- Tracks token usage per-model
+
+## Token Budget Tracking
+
+`query/tokenBudget.ts` manages the context window:
+
+- Tracks total tokens used across the conversation
+- Triggers auto-compaction when approaching limits
+- Supports different budget strategies per model
+- Integrates with the compact service for context reduction
+
+## Cost Tracking
+
+`cost-tracker.ts` provides session-wide cost monitoring:
+
+- Per-model token accounting (input, output, cache reads/writes)
+- USD cost calculation based on model pricing
+- Budget enforcement via `--max-budget-usd`
+- Integration with OTel metrics counters
+
+## History Management
+
+`history.ts` manages prompt history:
+
+- Persistent history stored per-project
+- Session history for conversation replay
+- Resume support for continuing previous sessions
+- History search and navigation
+
+## Migration System
+
+Migrations run sequentially when `globalConfig.migrationVersion !== 11`:
+
+| Migration | Purpose |
+|-----------|---------|
+| `migrateAutoUpdatesToSettings()` | Move auto-update config |
+| `migrateBypassPermissionsAccepted()` | Move bypass flag |
+| `resetProToOpusDefault()` | Reset Pro model to Opus |
+| `migrateSonnet45ToSonnet46()` | Rename to Sonnet 4.6 |
+| `migrateOpusToOpus1m()` | Rename to Opus 1m |
+| `migrateFennecToOpus()` | Ant-only Fennec migration |
+
+## Deferred Prefetches
+
+After first REPL render, fire-and-forget prefetches load:
+
+- User context and tips
+- AWS/GCP credentials (if Bedrock/Vertex)
+- File count estimation
+- Analytics gates
+- MCP URLs
+- Model capabilities refresh
+- Settings and skill change detectors

@@ -1,0 +1,133 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Claude Code Internals",
+  "theme": "maple",
+  "colors": {
+    "primary": "#D97706",
+    "light": "#FBBF24",
+    "dark": "#B45309"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Overview",
+        "icon": "eye",
+        "groups": [
+          {
+            "group": "Introduction",
+            "pages": [
+              "overview/introduction",
+              "overview/how-it-leaked",
+              "overview/key-findings"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Deep Dive",
+        "icon": "microscope",
+        "groups": [
+          {
+            "group": "Hidden Systems",
+            "pages": [
+              "deep-dive/buddy-tamagotchi",
+              "deep-dive/kairos-always-on",
+              "deep-dive/ultraplan",
+              "deep-dive/dream-system"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "deep-dive/multi-agent",
+              "deep-dive/system-prompt",
+              "deep-dive/tool-registry",
+              "deep-dive/permissions"
+            ]
+          },
+          {
+            "group": "Internal Culture",
+            "pages": [
+              "deep-dive/undercover-mode",
+              "deep-dive/penguin-mode",
+              "deep-dive/feature-gating",
+              "deep-dive/beta-headers",
+              "deep-dive/upcoming-models"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Specification",
+        "icon": "file-lines",
+        "groups": [
+          {
+            "group": "Core",
+            "pages": [
+              "spec/overview",
+              "spec/entry-query",
+              "spec/commands"
+            ]
+          },
+          {
+            "group": "Tools & UI",
+            "pages": [
+              "spec/tools",
+              "spec/components",
+              "spec/agents-permissions"
+            ]
+          },
+          {
+            "group": "Services & Infra",
+            "pages": [
+              "spec/services-state",
+              "spec/hooks",
+              "spec/terminal-framework",
+              "spec/bridge-remote"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "spec/utilities",
+              "spec/special-systems",
+              "spec/constants-types"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Rust Rewrite",
+        "icon": "gear-code",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "rust-impl/overview",
+              "rust-impl/architecture"
+            ]
+          },
+          {
+            "group": "Crates",
+            "pages": [
+              "rust-impl/crate-core",
+              "rust-impl/crate-api",
+              "rust-impl/crate-tools",
+              "rust-impl/crate-query",
+              "rust-impl/crate-tui",
+              "rust-impl/crate-commands",
+              "rust-impl/crate-mcp",
+              "rust-impl/crate-bridge",
+              "rust-impl/crate-cli",
+              "rust-impl/crate-buddy"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footerSocials": {
+    "github": "https://github.com/kuberwastaken/claude-code"
+  }
+}

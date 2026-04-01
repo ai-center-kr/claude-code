@@ -1,0 +1,83 @@
+---
+title: "Claude Code Internals"
+description: "A deep technical analysis of Claude Code's leaked source and a clean-room Rust reimplementation"
+---
+
+## What Is This?
+
+On March 31, 2026, a source map file (`.map`) bundled inside the `@anthropic-ai/claude-code` npm package exposed the **entire TypeScript source code** of Claude Code — Anthropic's official AI coding CLI and the most popular AI coding agent on the market.
+
+This project is a structured analysis of that leak and a clean-room Rust reimplementation built from behavioral specifications alone, never referencing the original TypeScript expression.
+
+<CardGroup cols={2}>
+  <Card title="How It Leaked" icon="unlock-keyhole" href="/overview/how-it-leaked">
+    A source map in npm exposed 800K+ lines of TypeScript. The irony is palpable.
+  </Card>
+  <Card title="BUDDY Tamagotchi" icon="paw" href="/deep-dive/buddy-tamagotchi">
+    A full gacha companion pet system with 18 species, shiny variants, and ASCII sprites.
+  </Card>
+  <Card title="Multi-Agent Orchestration" icon="diagram-project" href="/deep-dive/multi-agent">
+    Coordinator mode transforms Claude Code into a parallel multi-agent system.
+  </Card>
+  <Card title="Rust Reimplementation" icon="gear-code" href="/rust-impl/overview">
+    A clean-room Rust rewrite built from behavioral specs across 10 crates.
+  </Card>
+</CardGroup>
+
+## Key Numbers
+
+The scale of what shipped inside a single npm package:
+
+| Metric | Value |
+|--------|-------|
+| Total lines of code | **800K+** |
+| TypeScript/TSX files | **1,902** |
+| Slash commands | **100+** |
+| Tools | **40+** |
+| React hooks | **104** |
+| React components | **389 files** |
+| Services | **130 files** |
+| Utility files | **~564** |
+| Rust crates (reimplementation) | **10** |
+
+<Note>
+  These numbers come from the source map's `sourcesContent` array, which contained every file in the original repository — including dead-code-eliminated internal features that never ship in the external build.
+</Note>
+
+## What Did We Find?
+
+Behind the polished CLI is a 785KB `main.tsx` entry point, a custom React terminal renderer, and systems that go far beyond a simple coding assistant:
+
+- **BUDDY** — A deterministic gacha Tamagotchi with 18 species, shiny variants, and procedurally generated stats
+- **KAIROS** — An always-on, proactive assistant mode that watches and acts without prompts
+- **ULTRAPLAN** — 30-minute remote planning sessions on Opus 4.6 via cloud containers
+- **Dream System** — Background memory consolidation that literally runs while Claude "sleeps"
+- **Undercover Mode** — Prevents Anthropic employees from revealing internal info in open-source commits
+- **Coordinator Mode** — Full multi-agent orchestration with parallel workers and shared scratchpads
+- **Penguin Mode** — The internal name for Fast Mode, penguins all the way down
+- **Capybara** — An unreleased model family already at version 2 with a 1M context fast variant
+
+## Legal Basis
+
+This project follows a strict two-phase clean-room process:
+
+<Steps>
+  <Step title="Specification">
+    An AI agent analyzed the source and produced exhaustive behavioral specifications — architecture, data flows, tool contracts, system designs. No source code was carried forward into the implementation phase.
+  </Step>
+  <Step title="Implementation">
+    A separate AI agent implemented from the spec alone, never referencing the original TypeScript. The output is idiomatic Rust that reproduces the **behavior**, not the **expression**.
+  </Step>
+</Steps>
+
+This mirrors established legal precedent:
+
+| Case | Principle |
+|------|-----------|
+| **Phoenix Technologies v. IBM (1984)** | Clean-room reverse engineering of the IBM PC BIOS is lawful when specification and implementation teams are walled off |
+| **Baker v. Selden (1879)** | Copyright protects expression, not ideas, systems, or methods of operation |
+| **17 U.S.C. Section 107** | Fair use covers commentary and analysis of publicly available software |
+
+<Warning>
+  This repository does not contain a copy of the proprietary Claude Code TypeScript source. The analysis sections quote limited excerpts for commentary purposes under fair use. The Rust implementation is an independent work derived from behavioral specifications.
+</Warning>

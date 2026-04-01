@@ -1,0 +1,154 @@
+---
+title: "Architecture Overview"
+description: "Master architecture of Claude Code: repo structure, data flow, permission model, and core subsystems"
+---
+
+Claude Code is an AI-powered CLI tool and coding assistant built as a full-featured interactive terminal application. It embeds a Claude AI model as an agentic coding assistant, runs in the terminal using a custom React-based TUI, and executes tools with user permission.
+
+<Note>
+Full spec: [`spec/00_overview.md`](https://github.com/anthropics/claude-code/blob/main/spec/00_overview.md)
+</Note>
+
+## Codebase Stats
+
+| Metric | Value |
+|--------|-------|
+| Primary Language | TypeScript/TSX (~1,902 files, ~800K+ LOC) |
+| Secondary Language | Rust (~47 files, in-progress port) |
+| Bundler | Bun |
+| UI Framework | Custom Ink (React reconciler for terminal) |
+| Runtime Target | Node.js / Bun CLI |
+
+## Repository Structure
+
+```
+Claude-Code/
+├── src/                          # Main TypeScript/TSX source
+│   ├── main.tsx                  # PRIMARY ENTRY POINT (4,683 lines)
+│   ├── query.ts                  # Main query/turn execution engine (69KB)
+│   ├── QueryEngine.ts            # Query engine class (46KB)
+│   ├── Tool.ts                   # Tool base framework (30KB)
+│   ├── commands.ts               # Command registry (25KB)
+│   ├── commands/                 # 87 slash commands (207 files)
+│   ├── components/               # React/Ink UI components (389 files)
+│   ├── hooks/                    # React hooks (104 files)
+│   ├── ink/                      # Custom Ink terminal framework (96 files)
+│   ├── bridge/                   # Bridge protocol (31 files)
+│   ├── services/                 # Business logic services (130 files)
+│   ├── tools/                    # Tool implementations (40+ tools, 184 files)
+│   ├── utils/                    # Utility functions (~564 files)
+│   └── ...                       # Additional subsystems
+├── claude-code-rust/             # Rust port (in-progress, 47 files)
+└── README.md
+```
+
+## High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      USER INTERFACE                          │
+│  Terminal (Ink TUI) <-> React Components <-> Hooks <-> Ctx  │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│                    MAIN APPLICATION                          │
+│  main.tsx -> REPL.tsx -> PromptInput -> MessageList          │
+│  Commands (87) <-> Command Registry <-> Plugin System        │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│                    QUERY ENGINE                              │
+│  query.ts -> QueryEngine.ts -> Tool execution -> Response    │
+│  Token budget -> Stop hooks -> Compact -> History            │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│                    TOOL SYSTEM (40+ tools)                   │
+│  BashTool, FileReadTool, FileEditTool, FileWriteTool         │
+│  GlobTool, GrepTool, WebFetchTool, WebSearchTool             │
+│  AgentTool, TaskCreateTool, MCPTool, SkillTool, ...          │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│                    SERVICES LAYER                            │
+│  API Client -> Analytics -> SessionMemory -> AutoDream       │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│                    TRANSPORT LAYER                           │
+│  CLI (local) / Bridge (remote) / IDE direct-connect          │
+│  SSETransport | WebSocketTransport | HybridTransport         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Core Subsystems
+
+<CardGroup cols={2}>
+  <Card title="Query Engine" icon="rotate">
+    Core loop: user input -> API request -> stream response -> tool execution -> token budget -> cost tracking.
+    Files: `query.ts`, `QueryEngine.ts`
+  </Card>
+  <Card title="Tool Framework" icon="wrench">
+    40+ tool implementations with Zod validation, permission system, and sandboxing.
+    Files: `Tool.ts`, `tools/`
+  </Card>
+  <Card title="Terminal UI" icon="terminal">
+    Custom React reconciler rendering to terminal with Yoga layout, ANSI processing, and fullscreen support.
+    Files: `ink/`, `components/`
+  </Card>
+  <Card title="Commands" icon="command">
+    87 slash commands with lazy loading, fuzzy matching, and keybinding integration.
+    Files: `commands/`, `commands.ts`
+  </Card>
+  <Card title="Bridge Protocol" icon="bridge">
+    Remote/cloud-synced sessions via JWT-authenticated WebSocket/SSE connections.
+    Files: `bridge/`
+  </Card>
+  <Card title="Multi-Agent System" icon="users">
+    Sub-agents, background tasks, coordinator mode, swarm mode, and team collaboration.
+    Files: `tools/AgentTool.ts`, `components/agents/`
+  </Card>
+  <Card title="Memory System" icon="brain">
+    Short-term session history, long-term memdir, and auto-consolidation "dream" service.
+    Files: `memdir/`, `services/SessionMemory/`, `services/autoDream/`
+  </Card>
+  <Card title="MCP Integration" icon="plug">
+    Model Context Protocol server support with dynamic tool registration.
+    Files: `tools/MCPTool.ts`, `components/mcp/`
+  </Card>
+</CardGroup>
+
+## Data Flow
+
+The core query loop processes each turn:
+
+1. User submits input via `PromptInput`
+2. `query.ts` builds the API request (system prompt + history + tools)
+3. Response streams from Claude API
+4. Tool use blocks are executed with permission checks
+5. Results feed back into the conversation
+6. Token budget and context compaction are managed
+7. Cost is tracked per-model
+
+## Permission Model
+
+Every tool declares required permissions. The permission system supports multiple modes:
+
+| Mode | Behavior |
+|------|----------|
+| `default` | Ask user for each tool invocation |
+| `plan` | Read-only tools auto-approved |
+| `auto` | All tools auto-approved |
+| `bypassPermissions` | Skip all permission checks |
+| `acceptEdits` | Auto-accept file edits |
+
+## Settings Layers
+
+Settings are resolved in priority order (highest to lowest):
+
+1. CLI flags (`--settings`, `--model`, etc.)
+2. Environment variables (`CLAUDE_CODE_*`)
+3. Policy settings (enterprise)
+4. Project settings (`.claude/settings.json`)
+5. User settings (`~/.claude/settings.json`)
+6. Defaults

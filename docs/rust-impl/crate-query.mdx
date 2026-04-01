@@ -1,0 +1,191 @@
+---
+title: "Crate: cc-query"
+description: "The core agentic query loop, auto-compact, cron scheduler, sub-agent spawning, and coordinator mode"
+sidebarTitle: "cc-query"
+---
+
+# cc-query
+
+The heart of the agent runtime. This crate implements the main conversation loop that sends messages to the API, processes streaming responses, detects tool-use requests, dispatches tool executions, feeds results back to the model, and handles auto-compact when the context window fills up.
+
+## Modules
+
+| Module | Purpose |
+|--------|---------|
+| `agent_tool` | `AgentTool` -- spawn sub-agents for complex sub-tasks |
+| `auto_dream` | Automatic memory consolidation daemon |
+| `compact` | Auto-compact service (summarize old messages when context fills) |
+| `coordinator` | Multi-worker agent orchestration mode |
+| `cron_scheduler` | Background task scheduler for cron-scheduled prompts |
+
+## Query Loop
+
+The main entry point is `run_query_loop()`:
+
+```rust
+pub async fn run_query_loop(
+    client: &AnthropicClient,
+    messages: &mut Vec<Message>,
+    tools: &[Box<dyn Tool>],
+    tool_ctx: &ToolContext,
+    config: &QueryConfig,
+    cost_tracker: Arc<CostTracker>,
+    event_tx: Option<mpsc::UnboundedSender<QueryEvent>>,
+    cancel_token: CancellationToken,
+) -> QueryOutcome
+```
+
+### Loop Behavior
+
+Each iteration:
+
+1. Check turn count against `max_turns`
+2. Check cancellation token
+3. Build API request (messages, tools, system prompt, thinking config)
+4. Stream the response via `create_message_stream`
+5. Accumulate events in `StreamAccumulator`
+6. Track costs
+7. Handle stop reason:
+   - **`end_turn`** -- return final message
+   - **`max_tokens`** -- return partial message
+   - **`tool_use`** -- execute tools, append results, continue loop
+   - **`stop_sequence`** -- return final message
+8. Auto-compact if context window is near full
+
+### Hook Integration
+
+The query loop fires hooks at key lifecycle points:
+- **PreToolUse** -- before each tool execution (blocking hooks can cancel)
+- **PostToolUse** -- after each tool execution
+- **Stop** -- when the model finishes its turn
+
+## QueryOutcome
+
+```rust
+pub enum QueryOutcome {
+    EndTurn { message: Message, usage: UsageInfo },
+    MaxTokens { partial_message: Message, usage: UsageInfo },
+    Cancelled,
+    Error(ClaudeError),
+}
+```
+
+## QueryConfig
+
+```rust
+pub struct QueryConfig {
+    pub model: String,
+    pub max_tokens: u32,
+    pub max_turns: u32,
+    pub system_prompt: Option<String>,
+    pub append_system_prompt: Option<String>,
+    pub output_style: OutputStyle,
+    pub working_directory: Option<String>,
+    pub thinking_budget: Option<u32>,
+    pub temperature: Option<f32>,
+}
+```
+
+## QueryEvent
+
+Events emitted for the TUI to render in real time:
+
+```rust
+pub enum QueryEvent {
+    Stream(StreamEvent),
+    ToolStart { tool_name: String, tool_id: String },
+    ToolEnd { tool_name: String, tool_id: String, result: String, is_error: bool },
+    TurnComplete { turn: u32, stop_reason: String },
+    Status(String),
+    Error(String),
+}
+```
+
+## Auto-Compact
+
+The compact module automatically summarizes older messages when context usage exceeds ~90%:
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `AUTOCOMPACT_TRIGGER_FRACTION` | 0.90 | Fraction of context that triggers compaction |
+| `AUTOCOMPACT_BUFFER_TOKENS` | 13,000 | Target free tokens after compaction |
+| `WARNING_THRESHOLD_BUFFER_TOKENS` | 20,000 | Token count for warning display |
+| `KEEP_RECENT_MESSAGES` | 10 | Messages preserved verbatim after compact |
+| `MAX_CONSECUTIVE_FAILURES` | 3 | Circuit breaker threshold |
+
+Strategy:
+1. Keep the last 10 messages verbatim
+2. Ask the model to summarize everything before those messages
+3. Replace the conversation head with a synthetic `<compact-summary>` user message
+
+```rust
+pub struct AutoCompactState {
+    pub compaction_count: u32,
+    pub consecutive_failures: u32,
+    pub disabled: bool,
+}
+```
+
+## AgentTool
+
+Lives in `cc-query` (not `cc-tools`) to avoid circular dependencies. Creates a nested query loop with its own context:
+
+```rust
+struct AgentInput {
+    description: String,        // Short task description
+    prompt: String,             // Full task prompt
+    tools: Option<Vec<String>>, // Tool filter (default: all minus AgentTool)
+    system_prompt: Option<String>,
+    max_turns: Option<u32>,     // Default: 10
+    model: Option<String>,      // Model override
+}
+```
+
+<Note>
+Sub-agents do not have access to `AgentTool` itself, preventing infinite recursion.
+</Note>
+
+## AutoDream
+
+Background memory consolidation daemon that fires when:
+1. **Time gate**: hours since last consolidation >= `min_hours` (default: 24)
+2. **Session gate**: transcript count since last consolidation >= `min_sessions` (default: 5)
+3. **Lock gate**: no other process is mid-consolidation (stale after 1 hour)
+
+## Coordinator Mode
+
+Multi-worker orchestration activated via `CLAUDE_CODE_COORDINATOR_MODE` env var. Injects additional system prompt sections that instruct the model to:
+- Spawn parallel workers via AgentTool
+- Communicate with workers via SendMessage
+- Synthesize findings before presenting to the user
+- Track parallel work via TaskCreate/TaskUpdate
+
+Internal tools (`Agent`, `SendMessage`, `TaskStop`) are excluded from worker agents.
+
+## Cron Scheduler
+
+Background tokio task that checks for due cron tasks every minute:
+
+```rust
+pub fn start_cron_scheduler(
+    client: Arc<AnthropicClient>,
+    tools: Arc<Vec<Box<dyn Tool>>>,
+    tool_ctx: ToolContext,
+    query_config: QueryConfig,
+    cancel: CancellationToken,
+);
+```
+
+Matching tasks spawn a sub-query loop. One-shot tasks are automatically removed after execution.
+
+## Single-Shot Query
+
+For non-agentic usage (no tool loop, just one API call):
+
+```rust
+pub async fn run_single_query(
+    client: &AnthropicClient,
+    messages: Vec<Message>,
+    config: &QueryConfig,
+) -> Result<Message, ClaudeError>
+```

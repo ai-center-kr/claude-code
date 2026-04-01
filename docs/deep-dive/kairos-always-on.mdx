@@ -1,0 +1,106 @@
+---
+title: "Explore KAIROS: Always-On Claude"
+description: "KAIROS is a persistent, always-running Claude assistant mode that watches, logs, and proactively acts on things it notices -- without waiting for user input."
+---
+
+## A Claude That Never Sleeps
+
+KAIROS is an unreleased mode where Claude Code transforms from a reactive coding assistant into a persistent, always-running agent. It watches your environment, maintains append-only daily logs, and proactively takes action when it notices something useful -- all without waiting for you to type.
+
+The mode is gated behind `PROACTIVE` and `KAIROS` compile-time feature flags and is completely absent from external builds.
+
+## How It Works
+
+### Tick-Driven Execution
+
+KAIROS operates on a **tick-based execution model**. On a regular interval, it receives `<tick>` prompts that let it decide whether to act proactively or stay quiet. The system prompt instructs:
+
+- Respond to `<tick>` prompts that keep it alive between turns
+- Use `SleepTool` to control wait time between actions (max 5 min for prompt cache expiry)
+- Must call `SleepTool` if nothing useful to do (never output "still waiting")
+- On first wake-up: greet user briefly, ask what they want
+
+### Terminal Focus Awareness
+
+KAIROS is aware of whether the user's terminal is focused:
+
+- **Unfocused** = autonomous action mode (user is away, take initiative)
+- **Focused** = collaborative mode (user is present, be responsive)
+
+### The 15-Second Blocking Budget
+
+Any proactive action that would block the user's workflow for more than **15 seconds** gets deferred. This is the core UX constraint -- KAIROS tries to be helpful without being annoying. The system is designed to feel like a professional assistant who only speaks when they have something valuable to say.
+
+## Append-Only Daily Logs
+
+KAIROS maintains daily log files in a structured directory under the memory system:
+
+```
+~/.claude/projects/<sanitized-git-root>/memory/logs/
+  YYYY/
+    MM/
+      YYYY-MM-DD.md
+```
+
+These logs are append-only -- KAIROS writes observations, decisions, and actions throughout the day. The logs feed into the Dream system for long-term memory consolidation and provide context for future sessions.
+
+## Brief Mode
+
+When KAIROS is active, a special output mode called **Brief** is enabled. Brief mode produces extremely concise responses designed for a persistent assistant that should not flood the terminal.
+
+Brief tool instructions are injected as a dynamic section in the system prompt (gated behind `KAIROS` or `KAIROS_BRIEF` feature flags). The goal is the difference between a chatty friend and a professional who only speaks when they have something valuable to contribute.
+
+<Note>
+  Brief mode is separately gated behind `KAIROS_BRIEF`, allowing Anthropic to test the output style independently from the full KAIROS system.
+</Note>
+
+## Exclusive Tools
+
+KAIROS gets access to tools that regular Claude Code does not have:
+
+| Tool | Purpose |
+|------|---------|
+| **SendUserFile** | Push files directly to the user (notifications, summaries, artifacts) |
+| **PushNotification** | Send push notifications to the user's device when something important happens |
+| **SubscribePR** | Subscribe to and monitor pull request activity, triggering proactive review or updates |
+| **SleepTool** | Control idle wait time between proactive actions |
+| **BriefTool** | Upload and summarize files to claude.ai |
+| **RemoteTriggerTool** | Trigger remote agent sessions |
+
+## Feature Flags
+
+The KAIROS system is controlled by multiple layers of gating:
+
+| Flag | Type | Purpose |
+|------|------|---------|
+| `PROACTIVE` | Compile-time | Master gate for proactive behavior |
+| `KAIROS` | Compile-time | Full KAIROS mode |
+| `KAIROS_BRIEF` | Compile-time | Brief output mode only |
+| `TRANSCRIPT_CLASSIFIER` | Compile-time | AFK mode (ML-based auto-approval) |
+| `tengu_onyx_plover` | GrowthBook runtime | Controls autoDream config within KAIROS |
+
+## System Prompt Additions
+
+When KAIROS is active, the system prompt receives a `getProactiveSection()` injection that instructs:
+
+```
+- Respond to <tick> prompts that keep you alive between turns
+- Use SleepTool to control wait time between actions (max 5 min prompt cache expiry)
+- Must call SleepTool if nothing useful to do (never output "still waiting")
+- First wake-up: greet user briefly, ask what they want
+- Terminal unfocused = autonomous action; focused = collaborative
+```
+
+## State Management
+
+The global session state tracks KAIROS activation:
+
+```typescript
+kairosActive: boolean  // Set at startup, read throughout session
+```
+
+This flag is checked by the system prompt builder, tool registry, and permission system to enable KAIROS-specific behavior paths.
+
+<Warning>
+  KAIROS is entirely dead-code-eliminated from external builds via Bun's constant-folding and tree-shaking. The feature flags resolve to `false` at compile time for non-internal builds.
+</Warning>

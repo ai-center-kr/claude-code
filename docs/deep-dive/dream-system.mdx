@@ -1,0 +1,141 @@
+---
+title: "Explore the Dream System: Memory Consolidation"
+description: "The autoDream system is a background memory consolidation engine that runs as a forked subagent -- Claude literally dreaming to organize what it has learned."
+---
+
+## Claude Dreams
+
+Deep inside `services/autoDream/`, there is a background memory consolidation engine called **autoDream**. The naming is intentional: it is Claude dreaming. A forked subagent wakes up periodically, reviews recent session transcripts, and consolidates learnings into persistent memory files so future sessions can orient quickly.
+
+## The Three-Gate Trigger
+
+The dream does not run on a whim. It has a **three-gate trigger system** where all three gates must pass before consolidation begins:
+
+| Gate | Condition | Default |
+|------|-----------|---------|
+| **Time gate** | At least N hours since last dream | 24 hours |
+| **Session gate** | At least N sessions since last dream | 5 sessions |
+| **Lock gate** | Acquire consolidation lock (prevents concurrent dreams) | File-based mutex |
+
+Gate order is strict: time check first, then session count, then lock acquisition. This prevents both over-dreaming (wasting resources) and under-dreaming (stale memory).
+
+### Configuration
+
+The gate thresholds are controlled by the GrowthBook config `tengu_onyx_plover`:
+
+```typescript
+// services/autoDream/autoDream.ts
+const DEFAULTS = { minHours: 24, minSessions: 5 }
+const SESSION_SCAN_INTERVAL_MS = 10 * 60 * 1000  // 10 minutes
+```
+
+User settings take precedence over GrowthBook:
+
+```typescript
+// services/autoDream/config.ts
+export function isAutoDreamEnabled(): boolean
+// Checks userSettings.autoDream first, then GrowthBook gate
+```
+
+## The Four Phases
+
+When all gates pass, the dream follows four strict phases defined in `consolidationPrompt.ts`:
+
+### Phase 1 -- Orient
+
+The subagent reads the memory directory to understand current state:
+- `ls` the memory directory
+- Read `MEMORY.md` (the index file)
+- Skim existing topic files to understand what is already captured
+
+### Phase 2 -- Gather Recent Signal
+
+Find new information worth persisting. Sources in priority order:
+1. Daily logs (KAIROS mode)
+2. Drifted memories (facts that have changed)
+3. Transcript search (recent session transcripts since last consolidation)
+
+### Phase 3 -- Consolidate
+
+Write or update memory files with new learnings:
+- Convert relative dates to absolute dates
+- Delete contradicted facts
+- Merge overlapping information
+- Create new topic files for genuinely new knowledge
+
+### Phase 4 -- Prune and Index
+
+Keep the memory system healthy:
+- Keep `MEMORY.md` under **200 lines** and approximately **25KB**
+- Remove stale pointers to deleted or moved content
+- Resolve contradictions between memory files
+- Update the index to reflect current state
+
+The consolidation prompt literally says:
+
+> *"You are performing a dream -- a reflective pass over your memory files. Synthesize what you've learned recently into durable, well-organized memories so that future sessions can orient quickly."*
+
+<Note>
+  The dream subagent gets **read-only bash** -- it can look at your project but not modify any source code. It is purely a memory consolidation pass, never a code change.
+</Note>
+
+## The Consolidation Lock
+
+The lock system in `consolidationLock.ts` prevents concurrent dreams across sessions and processes:
+
+```typescript
+export async function tryAcquireConsolidationLock(): Promise<number | null>
+export async function rollbackConsolidationLock(priorMtime: number): Promise<void>
+export async function recordConsolidation(): Promise<void>
+export async function readLastConsolidatedAt(): Promise<number>
+export async function listSessionsTouchedSince(sinceMs: number): Promise<string[]>
+```
+
+Key design details:
+
+| Property | Value |
+|----------|-------|
+| Lock file | `.consolidate-lock` in memory directory |
+| Stale threshold | 1 hour (`HOLDER_STALE_MS = 60 * 60 * 1000`) |
+| Ownership | PID-based -- stale locks (dead PID or >1h old) are overwritten |
+| Dual purpose | Lock file `mtime` doubles as `lastConsolidatedAt` timestamp |
+
+The lock file's modification time serves double duty as both the lock mechanism and the "last consolidated at" timestamp. If the owning process dies or holds the lock for more than an hour, the lock is considered stale and can be overwritten.
+
+On failure, `rollbackConsolidationLock()` restores the mtime to its prior value so the next attempt does not skip the time gate.
+
+## Memory Directory Structure
+
+The dream system writes to the standard memory directory:
+
+```
+~/.claude/projects/<sanitized-git-root>/memory/
+  MEMORY.md           -- entrypoint index (always loaded)
+  <topic-file>.md     -- individual memory files with frontmatter
+  team/               -- team-shared memories
+  logs/               -- KAIROS mode: append-only daily logs
+    YYYY/MM/YYYY-MM-DD.md
+```
+
+Memory files use YAML frontmatter with four types:
+
+| Type | Scope | Description |
+|------|-------|-------------|
+| `user` | Always private | User's role, goals, knowledge, preferences |
+| `feedback` | Private or team | How-to-approach-work guidance from corrections |
+| `project` | Usually team | Ongoing work, goals, bugs not derivable from code |
+| `reference` | Usually team | Pointers to external systems (Linear, Grafana, Slack) |
+
+## Integration Point
+
+The dream system is initialized as a post-sampling hook and returns a cleanup function:
+
+```typescript
+export function initAutoDream(): () => void  // returns stop/cleanup function
+```
+
+It registers itself during bootstrap and runs its scan interval (`SESSION_SCAN_INTERVAL_MS = 10 minutes`) in the background for the lifetime of the Claude Code process.
+
+<Warning>
+  The dream system is gated behind the `tengu_onyx_plover` GrowthBook flag and the `autoDream` user setting. It is one of the features that demonstrates how Claude Code is evolving from a session-based tool into a persistent knowledge agent.
+</Warning>

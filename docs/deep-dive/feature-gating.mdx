@@ -1,0 +1,139 @@
+---
+title: "Map the Feature Gating System"
+description: "Claude Code uses a sophisticated dual-layer feature gating system: compile-time flags via Bun's bundler for build elimination, and GrowthBook for runtime A/B testing and kill-switches."
+---
+
+## Two Layers of Gating
+
+Claude Code has a dual-layer feature gating system that controls what code ships, what features activate, and who sees what:
+
+1. **Compile-time flags** via Bun's `feature()` function -- constant-folded and dead-code-eliminated at build time
+2. **Runtime flags** via GrowthBook -- remotely configurable, cached, and kill-switchable
+
+## Compile-Time Feature Flags
+
+Bun's bundler provides a `feature()` function from `bun:bundle` that evaluates to a constant at build time. The bundler then **constant-folds** the result and **dead-code-eliminates** the gated branches from external builds.
+
+### Complete Flag Table
+
+| Flag | What It Gates |
+|------|--------------|
+| `PROACTIVE` | Always-on assistant mode (KAIROS) |
+| `KAIROS` | Full KAIROS mode |
+| `KAIROS_BRIEF` | Brief command output style |
+| `BRIDGE_MODE` | Remote control via claude.ai |
+| `DAEMON` | Background daemon mode |
+| `VOICE_MODE` | Voice input capabilities |
+| `WORKFLOW_SCRIPTS` | Workflow automation |
+| `COORDINATOR_MODE` | Multi-agent orchestration |
+| `TRANSCRIPT_CLASSIFIER` | AFK mode (ML-based auto-approval) |
+| `BUDDY` | Companion pet system |
+| `NATIVE_CLIENT_ATTESTATION` | Client authenticity verification |
+| `HISTORY_SNIP` | History snipping |
+| `EXPERIMENTAL_SKILL_SEARCH` | Skill discovery |
+| `CONNECTOR_TEXT` | Connector text summarization |
+| `CHICAGO_MCP` | Computer Use MCP integration |
+| `TOKEN_BUDGET` | Token budget management |
+| `CONTEXT_COLLAPSE` | Context window inspection |
+| `TERMINAL_PANEL` | Terminal panel capture |
+
+In external builds, all these flags resolve to `false`, and the entire code paths they gate are eliminated from the bundle. The source code simply does not exist in the production JavaScript.
+
+<Note>
+  Source maps bypass dead code elimination. The `.map` file contains the original TypeScript before any build transformations, which is how all these gated features were discovered.
+</Note>
+
+## USER_TYPE Gates
+
+The `USER_TYPE === 'ant'` check gates Anthropic-internal features that are present in the code but only activate for internal users:
+
+| Feature | Description |
+|---------|-------------|
+| Staging API access | `claude-ai.staging.ant.dev` |
+| Internal beta headers | `cli-internal-2026-02-09` |
+| Undercover Mode | Prevents internal info leaks |
+| `/security-review` command | Security review workflow |
+| `ConfigTool` | Settings modification tool |
+| `TungstenTool` | Advanced internal features |
+| Debug prompt dumping | `~/.config/claude/dump-prompts/` |
+| GrowthBook dev key | Separate SDK key for internal testing |
+| Numeric length anchors | ≤25 words between tool calls, ≤100 words final |
+| Code style rules | No-comments-by-default guidance |
+
+## GrowthBook Runtime Gating
+
+GrowthBook handles runtime feature flags with aggressively cached values. The system is initialized as a singleton and supports multiple access patterns:
+
+### Caching Tiers
+
+```typescript
+// Blocks on initialization -- deprecated, avoid
+getFeatureValue_DEPRECATED<T>(feature, defaultValue): Promise<T>
+
+// Returns synchronously from in-memory cache -- may be stale
+getFeatureValue_CACHED_MAY_BE_STALE<T>(feature, defaultValue): T
+
+// Awaits init then returns cached value -- security gates only
+checkGate_CACHED_OR_BLOCKING(gate): Promise<boolean>
+
+// Security restriction gates -- always blocking
+checkSecurityRestrictionGate(gate): Promise<boolean>
+```
+
+<Tip>
+  Most feature checks use `getFeatureValue_CACHED_MAY_BE_STALE()` to avoid blocking the main loop. Stale data is considered acceptable for feature gates -- the system refreshes in the background and the next check will pick up the new value.
+</Tip>
+
+### The `tengu_` Prefix Convention
+
+Feature flags prefixed with `tengu_` control everything from fast mode to memory consolidation. Known flags include:
+
+| Flag | Purpose |
+|------|---------|
+| `tengu_penguins_off` | Kill-switch for Penguin Mode (fast mode) |
+| `tengu_scratch` | Enables shared scratchpad directory |
+| `tengu_amber_flint` | Agent Teams/Swarm capabilities |
+| `tengu_onyx_plover` | autoDream memory consolidation config |
+| `tengu_ultraplan_model` | ULTRAPLAN model configuration |
+| `tengu_coordinator_mode_switched` | Analytics: coordinator mode toggled |
+
+### Initialization and Persistence
+
+```typescript
+export function initializeGrowthBook(): Promise<GrowthBook | null>
+```
+
+- Loads disk-cached features from `~/.claude/cachedGrowthBookFeatures`
+- Applies `CLAUDE_INTERNAL_FC_OVERRIDES` env var overrides (JSON format)
+- Connects to GrowthBook remote with a 5000ms timeout
+- Sets up periodic background refresh
+- Returns `null` when analytics are disabled or in API key mode without user_id
+
+### Override System
+
+For development and testing, overrides can be applied at multiple levels:
+
+<CodeGroup>
+```bash Environment Variable Override
+CLAUDE_INTERNAL_FC_OVERRIDES='{"tengu_penguins_off": true}' claude
+```
+
+```typescript Programmatic Override
+setGrowthBookConfigOverride('tengu_scratch', true)
+clearGrowthBookConfigOverrides()
+```
+</CodeGroup>
+
+### GrowthBook Client Keys
+
+Three separate SDK keys are used based on user type:
+
+| Condition | Key Purpose |
+|-----------|------------|
+| `USER_TYPE === 'ant'` + `ENABLE_GROWTHBOOK_DEV` | Dev/internal testing |
+| `USER_TYPE === 'ant'` (no dev flag) | Internal production |
+| All external users | External production |
+
+<Warning>
+  The `checkSecurityRestrictionGate()` function is the only access pattern that **blocks** on initialization. It is reserved for enterprise policy enforcement where stale data is not acceptable -- a security gate must never return a default value before initialization completes.
+</Warning>

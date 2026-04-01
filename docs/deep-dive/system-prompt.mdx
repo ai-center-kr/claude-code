@@ -1,0 +1,143 @@
+---
+title: "Analyze the System Prompt Architecture"
+description: "Claude Code's system prompt is not a single string -- it is built from modular, cached sections composed at runtime with a strict static/dynamic boundary."
+---
+
+## Modular Prompt Assembly
+
+The system prompt is not a monolithic string. It is assembled from **modular, cached sections** composed at runtime in `constants/prompts.ts`. The architecture splits the prompt into static (globally cacheable) and dynamic (per-session) sections, separated by an explicit boundary marker.
+
+## The Dynamic Boundary
+
+```typescript
+export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__'
+```
+
+Everything **before** this marker in the system prompt array can use `scope: 'global'` for prompt caching -- it is stable across organizations and sessions. Everything **after** contains per-user, per-session content that breaks cache when changed.
+
+## Static Sections (Cache-Stable)
+
+These sections are assembled first and are identical across all users on the same build:
+
+| Order | Section | Content |
+|-------|---------|---------|
+| 1 | `getSimpleIntroSection()` | Identity framing, CYBER_RISK_INSTRUCTION, URL policy |
+| 2 | `getSimpleSystemSection()` | Communication rules, tool approvals, system-reminder tags, prompt injection warning, hooks, context compression |
+| 3 | `getSimpleDoingTasksSection()` | Software engineering task guidance, code style rules, user help info |
+| 4 | `getActionsSection()` | Action reversibility and blast radius guidance |
+| 5 | `getUsingYourToolsSection()` | Tool preferences (dedicated tools over Bash), parallel tool calls |
+| 6 | `getSimpleToneAndStyleSection()` | No emoji, concise responses, file:line references |
+| 7 | `getOutputEfficiencySection()` | Different content for `ant` vs external users |
+
+### Code Style Rules (ant-internal)
+
+The `getSimpleDoingTasksSection()` includes internal-only coding guidance:
+
+- Default to writing no comments
+- Only add comments when the WHY is non-obvious
+- Do not explain WHAT the code does
+- Do not reference the current task in comments
+- Do not remove existing comments unless removing the code they describe
+
+## Dynamic Sections (Per-Session)
+
+After the boundary marker, registry-managed sections are injected and cached per-section:
+
+| Section Key | Content |
+|------------|---------|
+| `session_guidance` | AskUserQuestion, shell bang, Agent tool, skills, verification |
+| `memory` | CLAUDE.md content |
+| `ant_model_override` | Ant-internal model overrides |
+| `env_info_simple` | Working directory, platform, OS, model, knowledge cutoff |
+| `language` | Language preference |
+| `output_style` | Active output style configuration |
+| `mcp_instructions` | MCP server instructions (uncached -- servers connect/disconnect between turns) |
+| `scratchpad` | Scratchpad directory instructions |
+| `frc` | Function result clearing instructions |
+| `summarize_tool_results` | Tool result summarization reminder |
+| `numeric_length_anchors` | (ant-only) Length limits: ≤25 words between tool calls, ≤100 words final |
+| `token_budget` | (TOKEN_BUDGET feature) Token target instructions |
+| `brief` | (KAIROS feature) Brief tool instructions |
+
+<Note>
+  The `mcp_instructions` section is explicitly uncached because MCP servers can connect and disconnect between turns. This is one of the few sections that must be rebuilt on every prompt assembly.
+</Note>
+
+## The DANGEROUS Function
+
+There is a function called `DANGEROUS_uncachedSystemPromptSection()` for volatile sections that you explicitly want to break cache. The naming convention alone tells you someone learned this lesson the hard way -- prompt cache invalidation is expensive, and accidentally putting volatile content in the static section wastes significant compute.
+
+## The Cyber Risk Instruction
+
+One particularly notable section is `CYBER_RISK_INSTRUCTION` in `constants/cyberRiskInstruction.ts`, which carries a massive warning header:
+
+```
+IMPORTANT: DO NOT MODIFY THIS INSTRUCTION WITHOUT SAFEGUARDS TEAM REVIEW
+This instruction is owned by the Safeguards team (David Forsythe, Kyla Guru)
+```
+
+The instruction defines the boundary between acceptable and harmful security assistance:
+
+```
+Assist with authorized security testing, defensive security, CTF challenges,
+and educational contexts. Refuse requests for destructive techniques, DoS attacks,
+mass targeting, supply chain compromise, or detection evasion for malicious purposes.
+Dual-use security tools (C2 frameworks, credential testing, exploit development)
+require clear authorization context.
+```
+
+This is injected into both the standard intro section and the proactive/autonomous mode section.
+
+## System Prompt Prefix Variants
+
+The opening line of the system prompt varies by context:
+
+<CodeGroup>
+```text Interactive CLI
+You are Claude Code, Anthropic's official CLI for Claude.
+```
+
+```text Agent SDK (with system prompt)
+You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.
+```
+
+```text Agent SDK (standalone)
+You are a Claude agent, built on Anthropic's Claude Agent SDK.
+```
+</CodeGroup>
+
+Selection logic:
+- Vertex AI always gets the default prefix
+- Non-interactive with `appendSystemPrompt` gets the Claude Code + Agent SDK prefix
+- Non-interactive without gets the Agent SDK prefix
+- Interactive gets the default prefix
+
+## Key Functions
+
+```typescript
+// Main entry point - returns array of prompt sections
+getSystemPrompt(tools, model, additionalWorkingDirectories?, mcpClients?): Promise<string[]>
+
+// Environment info for subagent prompts (legacy format)
+computeEnvInfo(modelId, additionalWorkingDirectories?): Promise<string>
+
+// Environment info for main prompts
+computeSimpleEnvInfo(modelId, additionalWorkingDirectories?): Promise<string>
+
+// Enhance existing prompt with environment details
+enhanceSystemPromptWithEnvDetails(existingSystemPrompt, model, ...): Promise<string[]>
+```
+
+## Section Caching
+
+The global state maintains a section cache to avoid recomputing stable sections:
+
+```typescript
+systemPromptSectionCache: Map<string, string | null>
+```
+
+This cache is per-session and is cleared on `/clear` and `/compact` commands.
+
+<Warning>
+  When `CLAUDE_CODE_SIMPLE=1` is set, the entire prompt architecture collapses to a single string: `'You are Claude Code...\nCWD: ...\nDate: ...'`. This is the bare mode used for testing and simple integrations.
+</Warning>

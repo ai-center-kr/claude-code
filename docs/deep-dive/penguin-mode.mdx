@@ -1,0 +1,98 @@
+---
+title: "Decode Penguin Mode (Fast Mode)"
+description: "Fast Mode is internally called Penguin Mode -- from the API endpoint to the kill-switch, it is penguins all the way down."
+---
+
+## Penguins All the Way Down
+
+What users know as "Fast Mode" is internally called **Penguin Mode**. Every layer of the implementation uses the penguin naming: the API endpoint, the config key, the kill-switch, the analytics events, and the beta header.
+
+## The API Endpoint
+
+The fast mode configuration is fetched from a dedicated API endpoint:
+
+```typescript
+const endpoint = `${getOauthConfig().BASE_API_URL}/api/claude_code_penguin_mode`
+```
+
+This endpoint returns the organization-level fast mode configuration for the authenticated user.
+
+## Naming Convention
+
+| Component | Internal Name |
+|-----------|--------------|
+| API endpoint | `/api/claude_code_penguin_mode` |
+| Config key | `penguinModeOrgEnabled` |
+| Kill-switch | `tengu_penguins_off` |
+| Analytics (failure) | `tengu_org_penguin_mode_fetch_failed` |
+| Beta header | `fast-mode-2026-02-01` |
+| UI indicator | `LIGHTNING_BOLT` (`↯`, U+21AF) |
+| Keybinding | `meta+o` mapped to `chat:fastMode` |
+
+## How It Works
+
+Fast Mode switches Claude Code to use a faster model tier at the same quality level. The system manages this through several layers:
+
+### User Settings
+
+```typescript
+// Writing fast mode preference
+fastMode: true | undefined  // stored in userSettings
+```
+
+When enabling fast mode, if the current model does not support it, the system also switches `mainLoopModel` to a compatible model.
+
+### Beta Header
+
+The `FAST_MODE_BETA_HEADER` is sent with API requests when fast mode is active:
+
+```typescript
+export const FAST_MODE_BETA_HEADER = 'fast-mode-2026-02-01'
+```
+
+This header is **latched** in the session state to avoid flickering:
+
+```typescript
+fastModeHeaderLatched: boolean | null  // Sticky once set per session
+```
+
+### Environment Variable
+
+Fast mode can be disabled entirely via environment variable:
+
+```typescript
+fastModeEnabled: boolean  // derived from !CLAUDE_CODE_DISABLE_FAST_MODE
+```
+
+## The Kill-Switch
+
+The `tengu_penguins_off` GrowthBook flag can remotely disable Penguin Mode for all users. This follows the standard pattern for Claude Code features -- every significant capability has a remote kill-switch prefixed with `tengu_`.
+
+<Note>
+  The naming pattern is consistent with Claude Code's internal culture: animal-themed codenames for everything. The CLI itself is "Tengu," fast mode is "Penguin," and the model families use names like "Capybara" and "Fennec."
+</Note>
+
+## Migration History
+
+The migration system reveals that fast mode evolved alongside model changes:
+
+```typescript
+// In migrations
+'fennec-fast-latest' / 'opus-4-5-fast' → 'opus[1m]' + fastMode: true
+```
+
+This shows that what was once a separate "fast" model variant was consolidated into a mode flag on the standard model.
+
+## Prefetching
+
+The `/fast` command prefetches fast mode status on render, ensuring the toggle is responsive:
+
+```typescript
+// Writes fastMode: true/undefined to userSettings
+// If enabling and current model doesn't support fast mode, also switches mainLoopModel
+// Prefetches fast mode status on render
+```
+
+<Tip>
+  The lightning bolt indicator (`↯`) appears in the terminal UI when Penguin Mode is active, giving users a visual confirmation that fast mode is engaged.
+</Tip>

@@ -1,0 +1,121 @@
+---
+title: "Decode Hidden Beta Headers"
+description: "Every API request from Claude Code includes beta feature headers that negotiate experimental capabilities. The full list reveals released, unreleased, and internal-only features."
+---
+
+## Negotiating Features via Headers
+
+Claude Code negotiates experimental API features by including beta header strings in every request. The `constants/betas.ts` file reveals the complete list of beta features, including several that have not been publicly announced.
+
+## The Complete Beta Header Table
+
+| Constant | Header Value | Status |
+|----------|-------------|--------|
+| `CLAUDE_CODE_20250219_BETA_HEADER` | `claude-code-20250219` | Core beta |
+| `INTERLEAVED_THINKING_BETA_HEADER` | `interleaved-thinking-2025-05-14` | Released |
+| `CONTEXT_1M_BETA_HEADER` | `context-1m-2025-08-07` | Released |
+| `CONTEXT_MANAGEMENT_BETA_HEADER` | `context-management-2025-06-27` | Released |
+| `STRUCTURED_OUTPUTS_BETA_HEADER` | `structured-outputs-2025-12-15` | Released |
+| `WEB_SEARCH_BETA_HEADER` | `web-search-2025-03-05` | Released |
+| `TOOL_SEARCH_BETA_HEADER_1P` | `advanced-tool-use-2025-11-20` | Released (1P) |
+| `TOOL_SEARCH_BETA_HEADER_3P` | `tool-search-tool-2025-10-19` | Released (3P) |
+| `EFFORT_BETA_HEADER` | `effort-2025-11-24` | Released |
+| `TASK_BUDGETS_BETA_HEADER` | `task-budgets-2026-03-13` | Active |
+| `PROMPT_CACHING_SCOPE_BETA_HEADER` | `prompt-caching-scope-2026-01-05` | Active |
+| `FAST_MODE_BETA_HEADER` | `fast-mode-2026-02-01` | Active |
+| `TOKEN_EFFICIENT_TOOLS_BETA_HEADER` | `token-efficient-tools-2026-03-28` | Active |
+| `SUMMARIZE_CONNECTOR_TEXT_BETA_HEADER` | `summarize-connector-text-2026-03-13` | Feature-gated |
+| `REDACT_THINKING_BETA_HEADER` | `redact-thinking-2026-02-12` | **Unreleased** |
+| `AFK_MODE_BETA_HEADER` | `afk-mode-2026-01-31` | **Unreleased** |
+| `CLI_INTERNAL_BETA_HEADER` | `cli-internal-2026-02-09` | **Internal only** |
+| `ADVISOR_BETA_HEADER` | `advisor-tool-2026-03-01` | **Unreleased** |
+
+## Unreleased Features
+
+Three beta headers stand out as not publicly available:
+
+### Redact Thinking (`redact-thinking-2026-02-12`)
+
+This header enables redaction of thinking blocks from API responses. When active, Claude's internal reasoning (extended thinking / chain-of-thought) is stripped before the response reaches the client. This could serve privacy, security, or cost-optimization purposes.
+
+### AFK Mode (`afk-mode-2026-01-31`)
+
+Gated behind the `TRANSCRIPT_CLASSIFIER` compile-time flag, AFK mode enables ML-based autonomous approval of tool uses when the user is away. This is the classifier that powers the `auto` permission mode -- the system decides on its own whether to approve actions without user input.
+
+```typescript
+export const AFK_MODE_BETA_HEADER =
+  feature('TRANSCRIPT_CLASSIFIER') ? 'afk-mode-2026-01-31' : ''
+```
+
+### Advisor Tool (`advisor-tool-2026-03-01`)
+
+The advisor tool beta header suggests a capability where Claude Code can consult an "advisor" -- potentially another model or system -- for guidance on complex decisions. The header is always included (not feature-gated), suggesting it may be closer to release.
+
+## Feature-Gated Headers
+
+Some headers are conditionally included based on compile-time flags:
+
+```typescript
+// Only included when CONNECTOR_TEXT feature is enabled
+export const SUMMARIZE_CONNECTOR_TEXT_BETA_HEADER =
+  feature('CONNECTOR_TEXT') ? 'summarize-connector-text-2026-03-13' : ''
+
+// Only included when TRANSCRIPT_CLASSIFIER feature is enabled
+export const AFK_MODE_BETA_HEADER =
+  feature('TRANSCRIPT_CLASSIFIER') ? 'afk-mode-2026-01-31' : ''
+
+// Only included for internal users
+export const CLI_INTERNAL_BETA_HEADER =
+  USER_TYPE === 'ant' ? 'cli-internal-2026-02-09' : ''
+```
+
+When the gate is not met, the header evaluates to an empty string and is excluded from the request.
+
+## Provider-Specific Handling
+
+Not all providers support the same beta headers. The code maintains explicit compatibility sets:
+
+### Bedrock Extra Params
+
+Bedrock only supports certain betas via `extraBodyParams` (not headers):
+
+```typescript
+const BEDROCK_EXTRA_PARAMS_HEADERS = new Set([
+  'interleaved-thinking-2025-05-14',
+  'context-1m-2025-08-07',
+  'tool-search-tool-2025-10-19',
+])
+```
+
+### Vertex Count Tokens
+
+Only these betas are allowed on Vertex `countTokens` API (others cause 400 errors):
+
+```typescript
+const VERTEX_COUNT_TOKENS_ALLOWED_BETAS = new Set([
+  'claude-code-20250219',
+  'interleaved-thinking-2025-05-14',
+  'context-management-2025-06-27',
+])
+```
+
+<Note>
+  The date suffixes in beta headers follow the pattern `feature-name-YYYY-MM-DD`, where the date typically represents when the beta was first introduced. This provides a natural ordering and versioning system for API features.
+</Note>
+
+## Header Latching
+
+Several beta headers are "latched" in session state to prevent flickering:
+
+```typescript
+afkModeHeaderLatched: boolean | null
+fastModeHeaderLatched: boolean | null
+cacheEditingHeaderLatched: boolean | null
+thinkingClearLatched: boolean | null
+```
+
+Once a header is sent in a session, it remains sticky for the duration. This prevents mid-session changes to feature availability from causing inconsistent API behavior.
+
+<Warning>
+  The `cli-internal-2026-02-09` header is the only one explicitly gated on `USER_TYPE === 'ant'`. This header likely enables internal-only API capabilities that are not available to external users, regardless of any other configuration.
+</Warning>

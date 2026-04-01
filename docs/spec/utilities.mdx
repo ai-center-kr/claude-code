@@ -1,0 +1,161 @@
+---
+title: "Browse 564 Utility Functions"
+description: "Complete catalog of utility functions across 36 subdirectories covering shell, auth, permissions, git, sessions, models, MCP, and more"
+---
+
+The `src/utils/` directory contains 564 files across 36 subdirectories, forming the foundational layer that all other systems depend on.
+
+<Note>
+Full spec: [`spec/10_utils.md`](https://github.com/anthropics/claude-code/blob/main/spec/10_utils.md)
+</Note>
+
+## Core Data Structures
+
+### CircularBuffer
+
+Fixed-size buffer that auto-evicts oldest items:
+
+```typescript
+class CircularBuffer<T> {
+  constructor(capacity: number)
+  add(item: T): void
+  addAll(items: T[]): void
+  getRecent(count: number): T[]
+  toArray(): T[]
+  clear(): void
+  length(): number
+}
+```
+
+### QueryGuard
+
+State machine for query lifecycle (`idle` -> `dispatching` -> `running`):
+
+```typescript
+class QueryGuard {
+  reserve(): boolean         // idle -> dispatching
+  cancelReservation(): void  // dispatching -> idle
+  tryStart(): number | null  // -> running, returns generation
+  end(generation): boolean   // running -> idle
+  forceEnd(): void
+  get isActive(): boolean
+  // useSyncExternalStore compatible
+  subscribe: (listener) => () => void
+  getSnapshot: () => boolean
+}
+```
+
+### Signal
+
+Lightweight event signal primitive used ~15x across the codebase:
+
+```typescript
+type Signal<Args extends unknown[] = []> = {
+  subscribe: (listener: (...args: Args) => void) => () => void
+  emit: (...args: Args) => void
+  clear: () => void
+}
+```
+
+### Memoization Utilities
+
+```typescript
+// Write-through cache with TTL and background refresh
+memoizeWithTTL<Args, Result>(f, cacheLifetimeMs?)
+
+// Async version with in-flight dedup
+memoizeWithTTLAsync<Args, Result>(f, cacheLifetimeMs?)
+
+// LRU-eviction memoize
+memoizeWithLRU<Args, Result>(f, cacheFn, maxCacheSize?)
+```
+
+## Utility Categories
+
+<CardGroup cols={2}>
+  <Card title="Shell and Process" icon="terminal">
+    Shell execution engine, command wrapping, CWD tracking, sandbox integration, PowerShell support.
+  </Card>
+  <Card title="Bash Parsing" icon="code">
+    Command analysis, safety checks, pattern matching for dangerous operations.
+  </Card>
+  <Card title="Configuration" icon="gear">
+    Settings loading, merge, validation, migration, per-scope resolution.
+  </Card>
+  <Card title="Authentication" icon="key">
+    API key management, OAuth, AWS/GCP credential handling, token refresh.
+  </Card>
+  <Card title="Permissions" icon="shield">
+    Rule evaluation, tool allowlists, path-based rules, permission modes.
+  </Card>
+  <Card title="File and Filesystem" icon="folder">
+    Path resolution, file reading, writing, temp files, glob, watch.
+  </Card>
+  <Card title="Git" icon="code-branch">
+    Status, diff, commit, branch, worktree, operation tracking.
+  </Card>
+  <Card title="Session" icon="clock-rotate-left">
+    History, persistence, resume, transcript, session switching.
+  </Card>
+</CardGroup>
+
+## Shell Execution (`Shell.ts`)
+
+The most important utility file. Provides the core shell execution engine:
+
+- **DEFAULT_TIMEOUT**: 30 minutes
+- **File mode** (bash): stdout+stderr both go to a single file fd (atomic O_APPEND)
+- **Pipe mode** (hooks, `onStdout`): data flows through StreamWrapper to TaskOutput in-memory
+- **CWD tracking**: captures `pwd -P` output to temp file after each command
+- **Sandbox wrapping**: calls `SandboxManager.wrapWithSandbox()` when enabled
+- **Shell selection priority**: `CLAUDE_CODE_SHELL` env > `$SHELL` > zsh > bash
+
+## Async Generator Utilities
+
+```typescript
+lastX<A>(gen): Promise<A>           // Get last yielded value
+returnValue<A>(gen): Promise<A>     // Get return value
+all<A>(gens, concurrency?): AsyncGenerator<A>  // Merge generators
+toArray<A>(gen): Promise<A[]>       // Collect all values
+fromArray<T>(values): AsyncGenerator<T>        // Array to generator
+```
+
+## Category Reference
+
+| # | Category | Key Files |
+|---|----------|-----------|
+| 1 | Core Data Structures | `CircularBuffer`, `QueryGuard`, `signal`, `memoize` |
+| 2 | Shell and Process | `Shell.ts`, `ShellCommand.ts` |
+| 3 | Bash Parsing | Command safety analysis |
+| 4 | Configuration | Settings loading, merge, validation |
+| 5 | Authentication | API keys, OAuth, cloud credentials |
+| 6 | Permissions | Rule evaluation, allowlists |
+| 7 | File and Filesystem | Path, read, write, temp, glob |
+| 8 | Git | Status, diff, commit, worktree |
+| 9 | Session Management | History, persistence, resume |
+| 10 | Message and Content | Content formatting, markdown |
+| 11 | Model Utilities | Model selection, capabilities |
+| 12 | MCP Utilities | Server management, protocol |
+| 13 | Swarm / Multi-Agent | Agent spawning, coordination |
+| 14 | Task and Output | Task tracking, output formatting |
+| 15 | Process User Input | Input parsing, validation |
+| 16 | Hooks System | User-defined hooks invocation |
+| 17 | Analytics and Telemetry | Event logging, metrics |
+| 18 | Background and Cron | Background tasks, scheduling |
+| 19 | Computer Use | Screen capture, input simulation |
+| 20 | Claude-in-Chrome | Browser extension integration |
+| 21 | Deep Link System | URL handling, protocol |
+| 22 | Plugin Utilities | Plugin loading, validation |
+| 23 | Swarm Backends | Worker backends for swarm |
+| 24 | Skills and Suggestions | Skill resolution, prompt suggestions |
+| 25 | Todo System | Task list management |
+| 26 | Teleport System | Session teleportation |
+| 27 | Memory Utilities | Memory scanning, relevance |
+| 28 | Sandbox | Sandbox configuration, wrapping |
+| 29 | Security | Secure storage, encryption |
+| 30 | Native Installer | Platform-specific installation |
+| 31 | General Utilities | String, array, date helpers |
+| 32 | Interactive Helpers | `interactiveHelpers.tsx` (57KB) |
+| 33 | Ink Module | Top-level Ink re-exports |
+| 34 | Shell Providers | Shell abstraction layer |
+| 35 | Ultraplan | Remote session polling |

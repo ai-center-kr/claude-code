@@ -1,0 +1,181 @@
+---
+title: "Crate: cc-cli"
+description: "Binary entry point -- CLI argument parsing, configuration assembly, auth flow, and REPL/headless mode selection"
+sidebarTitle: "cc-cli"
+---
+
+# cc-cli
+
+The binary entry point for the Claude Code Rust port. This crate produces the `claude` executable and orchestrates all other crates together. It handles CLI argument parsing, configuration assembly, API client initialization, and mode selection between headless and interactive REPL.
+
+## Entry Point Flow
+
+```
+main()
+  ├─ Fast paths:
+  │   ├─ --version / -V → print version, exit
+  │   ├─ claude auth <login|logout|status> → auth command
+  │   └─ claude <named-command> → dispatch to cc-commands
+  │
+  ├─ Parse CLI args (Clap)
+  ├─ Setup logging (tracing-subscriber)
+  ├─ Load settings from disk
+  ├─ Build effective config (CLI overrides settings)
+  ├─ Build context (CLAUDE.md, git status)
+  ├─ Build system prompt
+  ├─ Resolve API key (config → env → OAuth → login flow)
+  ├─ Initialize API client
+  ├─ Connect MCP servers
+  ├─ Register tools (built-in + AgentTool + MCP tools)
+  │
+  ├─ If --print / prompt: headless mode
+  │   └─ Single query, output to stdout
+  │
+  └─ Else: interactive REPL mode
+      └─ Full TUI with ratatui
+```
+
+## CLI Arguments
+
+Defined with Clap derive:
+
+```rust
+#[derive(Parser)]
+#[command(name = "claude", version, about = "Claude Code - AI-powered coding assistant")]
+struct Cli {
+    prompt: Option<String>,              // Initial prompt (enables headless mode)
+
+    #[arg(short = 'p', long = "print")]
+    print: bool,                         // Print mode (non-interactive)
+
+    #[arg(short = 'm', long = "model")]
+    model: String,                       // Model to use
+
+    #[arg(long = "permission-mode")]
+    permission_mode: CliPermissionMode,  // Permission mode
+
+    #[arg(long = "resume")]
+    resume: Option<String>,              // Resume session by ID
+
+    #[arg(long = "max-turns")]
+    max_turns: u32,                      // Max agentic turns (default: 10)
+
+    #[arg(long = "system-prompt", short = 's')]
+    system_prompt: Option<String>,       // Custom system prompt
+
+    #[arg(long = "append-system-prompt")]
+    append_system_prompt: Option<String>, // Append to system prompt
+
+    #[arg(long = "no-claude-md")]
+    no_claude_md: bool,                  // Disable CLAUDE.md files
+
+    #[arg(long = "output-format")]
+    output_format: CliOutputFormat,      // Output format (text/json/stream-json)
+
+    #[arg(long = "verbose", short = 'v')]
+    verbose: bool,                       // Enable debug logging
+
+    #[arg(long = "api-key")]
+    api_key: Option<String>,             // API key override
+
+    #[arg(long = "max-tokens")]
+    max_tokens: Option<u32>,             // Max tokens per response
+
+    #[arg(long = "cwd")]
+    cwd: Option<PathBuf>,                // Working directory override
+
+    #[arg(long = "dangerously-skip-permissions")]
+    dangerously_skip_permissions: bool,  // Bypass all permission checks
+
+    #[arg(long = "mcp-config")]
+    mcp_config: Option<String>,          // Inline MCP server config JSON
+
+    #[arg(long = "no-auto-compact")]
+    no_auto_compact: bool,               // Disable auto-compaction
+}
+```
+
+### Permission Modes
+
+```rust
+enum CliPermissionMode {
+    Default,           // Allow read-only automatically
+    AcceptEdits,       // Allow all edits automatically
+    BypassPermissions, // Allow everything
+    Plan,              // Read-only planning mode
+}
+```
+
+### Output Formats
+
+```rust
+enum CliOutputFormat {
+    Text,       // Human-readable text
+    Json,       // Complete JSON response
+    StreamJson, // Newline-delimited JSON events
+}
+```
+
+## MCP Tool Wrapper
+
+MCP server tools are wrapped to satisfy the `cc-tools::Tool` trait:
+
+```rust
+struct McpToolWrapper {
+    tool_def: ToolDefinition,
+    server_name: String,
+    manager: Arc<McpManager>,
+}
+```
+
+All MCP tools are treated with `PermissionLevel::Execute` since they run external processes.
+
+## OAuth Flow
+
+The `oauth_flow` module implements OAuth 2.0 PKCE login:
+
+1. Generate PKCE `code_verifier` / `code_challenge` / `state`
+2. Bind a temporary localhost HTTP server on a random port
+3. Build auth URL and attempt to open in browser
+4. Wait for callback redirect or manual code paste (60s timeout)
+5. Exchange authorization code for tokens
+6. For Console flow: call `create_api_key` endpoint
+7. Save tokens to `~/.claude/oauth_tokens.json`
+8. Return credential (API key or Bearer token)
+
+```rust
+pub struct LoginResult {
+    pub credential: String,
+    pub use_bearer_auth: bool,
+    pub tokens: OAuthTokens,
+}
+
+pub async fn run_oauth_login_flow(login_with_claude_ai: bool) -> anyhow::Result<LoginResult>;
+```
+
+Two auth flows are supported:
+- **Console flow** (`false`) -- creates an API key
+- **Claude.ai flow** (`true`) -- user:inference scope, Bearer authentication
+
+## Authentication Resolution
+
+The CLI resolves credentials in priority order:
+
+1. `--api-key` flag or `config.api_key`
+2. `ANTHROPIC_API_KEY` environment variable
+3. Saved OAuth tokens on disk
+4. Interactive OAuth login flow (if not in headless mode)
+
+## Named Command Dispatch
+
+Before Clap parsing, the CLI checks if the first argument matches a registered named command (`agents`, `branch`, `ide`, etc.). This allows command names that would otherwise conflict with the positional prompt argument:
+
+```rust
+if let Some(named_cmd) = find_named_command(cmd_name) {
+    named_cmd.execute_named(&rest, &cmd_ctx);
+}
+```
+
+<Note>
+The hidden `--dump-system-prompt` flag prints the assembled system prompt to stdout and exits, useful for debugging prompt construction.
+</Note>

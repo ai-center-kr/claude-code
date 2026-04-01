@@ -1,0 +1,119 @@
+---
+title: "Understand Multi-Agent Orchestration"
+description: "Claude Code's Coordinator Mode transforms a single agent into a parallel multi-agent system with workers, shared scratchpads, and structured task phases."
+---
+
+## From Single Agent to Orchestrator
+
+When `CLAUDE_CODE_COORDINATOR_MODE=1` is set and the `COORDINATOR_MODE` compile-time feature flag is enabled, Claude Code transforms from a single agent into a **coordinator** that spawns, directs, and manages multiple worker agents in parallel.
+
+The system lives in `src/coordinator/coordinatorMode.ts` and represents one of the most architecturally ambitious features in the codebase.
+
+## The Four-Phase Workflow
+
+The coordinator system prompt defines a structured workflow with four phases:
+
+| Phase | Who Executes | Purpose |
+|-------|-------------|---------|
+| **Research** | Workers (parallel) | Investigate the codebase, find files, understand the problem |
+| **Synthesis** | Coordinator | Read all findings, understand the problem, craft detailed specs |
+| **Implementation** | Workers (parallel) | Make targeted changes per spec, commit work |
+| **Verification** | Workers (parallel) | Test that changes work correctly |
+
+The coordinator's system prompt is a masterclass in multi-agent design, spanning 1500+ characters with detailed guidance on when and how to delegate.
+
+## Parallelism as a Superpower
+
+The prompt explicitly teaches parallelism:
+
+> *"Parallelism is your superpower. Workers are async. Launch independent workers concurrently whenever possible -- don't serialize work that can run simultaneously."*
+
+And it bans lazy delegation:
+
+> *Do NOT say "based on your findings" -- read the actual findings and specify exactly what to do.*
+
+## Worker Communication
+
+Workers communicate via `<task-notification>` XML messages. The coordinator dispatches tasks and receives structured results, maintaining awareness of all worker states.
+
+### Available Coordinator Tools
+
+| Tool | Purpose |
+|------|---------|
+| **AgentTool** | Spawn child agents / subagents for task execution |
+| **SendMessageTool** | Send messages to team members |
+| **TaskStopTool** | Stop a running background task |
+
+### Worker Tool Restrictions
+
+Workers get access to a curated tool set. Internal coordinator tools are excluded from worker access:
+
+```typescript
+const INTERNAL_WORKER_TOOLS = new Set([
+  TEAM_CREATE_TOOL_NAME,
+  TEAM_DELETE_TOOL_NAME,
+  SEND_MESSAGE_TOOL_NAME,
+  SYNTHETIC_OUTPUT_TOOL_NAME,
+])
+```
+
+In `CLAUDE_CODE_SIMPLE` mode, worker tools are restricted to just Bash, Read, and Edit.
+
+## Shared Scratchpad
+
+When the GrowthBook gate `tengu_scratch` is enabled, a shared **scratchpad directory** provides cross-worker durable knowledge sharing. The coordinator injects scratchpad directory context via `getCoordinatorUserContext()`, allowing workers to write findings and specs that other workers can read.
+
+```typescript
+export function getCoordinatorUserContext(
+  mcpClients: ReadonlyArray<{ name: string }>,
+  scratchpadDir?: string
+): { workerToolsContext: string }
+```
+
+## Agent Teams and Swarm
+
+Beyond basic coordination, the codebase includes **Agent Teams/Swarm** capabilities gated behind the `tengu_amber_flint` feature:
+
+| Capability | Description |
+|-----------|-------------|
+| **In-process teammates** | Use `AsyncLocalStorage` for context isolation |
+| **Process-based teammates** | Use tmux or iTerm2 panes for visual separation |
+| **Team memory sync** | Shared memory across all team members |
+| **Color assignments** | Visual distinction between agents in terminal output |
+
+Color management is tracked via the global state:
+
+```typescript
+agentColorMap: Map<string, AgentColorName>
+agentColorIndex: number
+```
+
+## Session Mode Alignment
+
+When resuming a session, the system aligns the current coordinator mode with the stored session mode:
+
+```typescript
+export function matchSessionMode(
+  sessionMode: 'coordinator' | 'normal' | undefined
+): string | undefined
+```
+
+If the mode was switched between sessions, it flips `process.env.CLAUDE_CODE_COORDINATOR_MODE` in-place and logs a `tengu_coordinator_mode_switched` analytics event. A user-visible warning message is returned when mode switching occurs.
+
+<Note>
+  The coordinator mode detection reads the `CLAUDE_CODE_COORDINATOR_MODE` environment variable live (not cached), allowing mid-process mode switching for session resume scenarios.
+</Note>
+
+## Configuration
+
+| Setting | Type | Purpose |
+|---------|------|---------|
+| `COORDINATOR_MODE` | Compile-time flag | Gates all coordinator functionality |
+| `CLAUDE_CODE_COORDINATOR_MODE` | Environment variable | Activates coordinator mode at runtime |
+| `CLAUDE_CODE_SIMPLE` | Environment variable | Restricts worker tools to Bash/Read/Edit |
+| `tengu_scratch` | GrowthBook gate | Enables shared scratchpad directory |
+| `tengu_amber_flint` | GrowthBook gate | Enables Agent Teams/Swarm capabilities |
+
+<Warning>
+  Coordinator mode fundamentally changes how Claude Code operates. Every tool call, permission check, and output rendering path needs to account for whether the current context is a coordinator, a worker, or a standalone agent.
+</Warning>

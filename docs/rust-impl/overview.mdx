@@ -1,0 +1,83 @@
+---
+title: "Rust Reimplementation Overview"
+description: "A clean-room Rust rewrite of Claude Code built entirely from behavioral specifications"
+sidebarTitle: "Overview"
+---
+
+# Rust Reimplementation Overview
+
+The Rust codebase at `src-rust/` is a **complete standalone rewrite** of the TypeScript Claude Code CLI in async Rust. It is not an FFI binding layer, not a partial port, and shares no runtime code with the TypeScript implementation.
+
+It re-implements the same tool names and semantics, permission model, CLAUDE.md discovery, auto-compact logic, MCP client, bridge protocol, and cron scheduler -- all in async Rust using the Tokio runtime.
+
+## Clean-Room Methodology
+
+This rewrite follows a strict **spec-only** approach:
+
+- All behavior is derived from behavioral specification documents in `spec/`
+- No TypeScript source code was referenced during implementation
+- The Rust port produces identical observable behavior to the original
+
+## Key Facts
+
+| Property | Value |
+|----------|-------|
+| Crates | 10 (Cargo workspace) |
+| License | MIT |
+| Edition | Rust 2021 |
+| Async Runtime | Tokio 1.44 (full features) |
+| Resolver | Cargo resolver v2 |
+| Version | 1.0.0 |
+
+## Workspace Members
+
+| Crate | Package | Type | Purpose |
+|-------|---------|------|---------|
+| `crates/core` | `cc-core` | Library | Shared types, config, permissions, history, hooks |
+| `crates/api` | `cc-api` | Library | API client + SSE streaming |
+| `crates/tools` | `cc-tools` | Library | All tool implementations (33 tools) |
+| `crates/query` | `cc-query` | Library | Agentic query loop, compact, cron scheduler |
+| `crates/tui` | `cc-tui` | Library | ratatui terminal UI |
+| `crates/commands` | `cc-commands` | Library | Slash command implementations |
+| `crates/mcp` | `cc-mcp` | Library | MCP (Model Context Protocol) client |
+| `crates/bridge` | `cc-bridge` | Library | Bridge to claude.ai web UI |
+| `crates/cli` | `claude-code` | Binary | Binary entry point (`claude`) |
+| `crates/buddy` | `cc-buddy` | Library | Tamagotchi companion system |
+
+## Explore the Crates
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/rust-impl/architecture">
+    Dependency graph and key design decisions
+  </Card>
+  <Card title="cc-core" icon="cube" href="/rust-impl/crate-core">
+    Shared types, config, errors, permissions, hooks
+  </Card>
+  <Card title="cc-api" icon="tower-broadcast" href="/rust-impl/crate-api">
+    Anthropic API client with SSE streaming
+  </Card>
+  <Card title="cc-tools" icon="toolbox" href="/rust-impl/crate-tools">
+    33 tool implementations (Bash, Read, Edit, Grep, ...)
+  </Card>
+  <Card title="cc-query" icon="arrows-spin" href="/rust-impl/crate-query">
+    Agentic query loop, auto-compact, cron scheduler
+  </Card>
+  <Card title="cc-tui" icon="display" href="/rust-impl/crate-tui">
+    Terminal UI with ratatui + crossterm
+  </Card>
+  <Card title="cc-commands" icon="terminal" href="/rust-impl/crate-commands">
+    Slash commands (/help, /compact, /model, ...)
+  </Card>
+  <Card title="cc-mcp" icon="plug" href="/rust-impl/crate-mcp">
+    Model Context Protocol client
+  </Card>
+  <Card title="cc-bridge" icon="bridge" href="/rust-impl/crate-bridge">
+    Bridge to claude.ai web UI
+  </Card>
+  <Card title="cc-cli" icon="rocket" href="/rust-impl/crate-cli">
+    Binary entry point and CLI argument parsing
+  </Card>
+  <Card title="cc-buddy" icon="ghost" href="/rust-impl/crate-buddy">
+    Tamagotchi companion system
+  </Card>
+</CardGroup>
